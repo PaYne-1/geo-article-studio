@@ -1,0 +1,1 @@
+必须实际查看所有当前生成图以及选用的产品基准图和参考图，不能仅凭提示词/文件名/哈希推断。逐项核对visible_text/product_structure/people_actions/visual_rules/body_alignment。对关键部件不确定标needs_review，不能保证结构百分百准确。检查真实文字拼写、旧Logo型号是否误继承、动作是否暗示不支持功能、正文是否吻合、实际图是否拒绝/占位。viewed_image_ids列实际查看的全部本篇生成图ID；evidence应包含图ID和观察到的区域/差异。无视觉能力由执行层暂停，不得自己宣称具备。学习模式人工看图时reviewer=human且必须引用真实用户检查输入。

@@ -1,0 +1,1 @@
+联合终审当前已通过文本审查的标题正文与全部真实图像。再次核对claims/semantic_rules/privacy/title_body/files/image_alignment，检查事实规则版本、每篇图数和文图语义一致。图数为0时image_alignment给明确不适用依据且无需虚构看图。图数大于0必须实际查看全部当前生成图及必要参考，填viewed_image_ids，不用文件存在代替视觉判断。任何未完成项或疑问判needs_review/failed。只返回结构化审核，成品发布由Python做。

@@ -1,0 +1,8 @@
+{
+  "example": true,
+  "formal": false,
+  "version": "FORMAT-EXAMPLE-NOT-PRODUCTION",
+  "rules": [
+    {"rule_id":"EXAMPLE-ONLY","scope":"global","target_id":null,"type":"hard_ban","content":"这里替换为用户实际提供的禁限内容","terms":[],"severity":"hard","check_method":"词语变体检查与独立语义审核"}
+  ]
+}

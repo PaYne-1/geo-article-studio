@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "default_product_name": "218切面侠",
+  "libraries": {"chat": null, "product_info": null, "reference_images": null, "product_images": null},
+  "output_root": null,
+  "workspace_root": null,
+  "user_path_mapping": null,
+  "rule_import_sources": [],
+  "products": [],
+  "source_mappings": {},
+  "defaults": {
+    "language": "zh-CN", "mode": null, "article_length": null,
+    "image_ratio": null, "image_dimensions": null, "image_format": "png",
+    "image_text_policy": null, "image_count_includes_cover": true
+  },
+  "limits": {
+    "max_generation_attempts_per_image": 3,
+    "max_text_revision_attempts": 3,
+    "max_parallel_image_requests": 1,
+    "max_image_requests_per_task": null,
+    "max_cost": null,
+    "currency": null
+  }
+}

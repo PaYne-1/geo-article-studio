@@ -1,0 +1,17 @@
+/.venv/
+/artifacts/
+**/__pycache__/
+**/.pytest_cache/
+**/*.egg-info/
+**/build/
+*.pyc
+.env
+.env.*
+!.env.example
+settings.json
+installation.json
+*.sqlite
+*.sqlite3
+*.db
+/GEO图文运行数据/
+/宿主验证/

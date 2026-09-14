@@ -1,0 +1,20 @@
+{
+  "image_provider": null,
+  "image_protocol_verification": null,
+  "image_pricing": {
+    "price_per_request": null,
+    "currency": null,
+    "verified_source": null
+  },
+  "host": {
+    "visual_capability": false,
+    "visual_verification_ref": null
+  },
+  "image_authorizations": {},
+  "reference_fallback": null,
+  "partial_policy": "pause_all",
+  "style_id": null,
+  "delivery_access": {
+    "verification_ref": null
+  }
+}

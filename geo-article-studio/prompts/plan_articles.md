@@ -1,0 +1,1 @@
+为当前article_id按已分配angle策划。核对本主题其他文章，结构和回答的问题要有实质差别。outline只使用已批准fact_ids；缺关键依据报告阻断，不把需求疑问变成产品功能。输出angle/question/outline/fact_ids/source_ids。只写当前一篇，不改变篇数和图数。

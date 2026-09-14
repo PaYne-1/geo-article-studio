@@ -1,0 +1,1 @@
+这是独立文本语义复审，不是生成自评。逐一核对标题正文和所有可核查主张是否被approved事实支持，不能仅检查claims自报内容。客户问题不能变好评，来源中的营销不证明功能。检查hard_ban含义和变体、conditional条件、隐私(姓名/健康详情/地址/订单)、同主题实质重复、标题与正文。check_id必须覆盖claims/semantic_rules/privacy/distinctness/title_body，各给verdict,severity,evidence,suggestion。硬性问题不能用总分抵消，不确定needs_review。reviewer=model, viewed_image_ids=[]。

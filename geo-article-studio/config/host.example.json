@@ -1,0 +1,16 @@
+{
+  "host": {
+    "agent": "generic",
+    "model": null,
+    "preferred_model": "Qwen",
+    "capabilities": {
+      "file_io": null,
+      "terminal": null,
+      "structured_results": null,
+      "human_confirmation": null,
+      "visual_review": null
+    },
+    "visual_capability": false,
+    "visual_verification_ref": null
+  }
+}
