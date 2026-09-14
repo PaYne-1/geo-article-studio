@@ -13,6 +13,7 @@ from .learning import RuleStore, require_user, now
 from .host_bridge import SCHEMAS, validate_result
 from .review import check_text, validate_review
 from .hosts import PROTOCOL, assess_host, require_declared_capabilities, visual_available, producer_identity
+from .text_api import TextProvider, uses_text_api
 
 def digest(value):
     return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
@@ -75,10 +76,12 @@ class Engine:
             if lib=='chat': rows.extend(self.index.search(scope.get('query',''),library_type=lib,product_id='general',limit=20,**{k:v for k,v in scope.items() if k!='query'}))
         return {r['source_id']:r for r in rows}
 
-    def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements=''):
+    def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements='',text_source=None):
         require_user(actor,user_ref)
         require_declared_capabilities(self.settings,mode=mode)
         if mode not in ('automatic','learning'): raise ValueError('模式必须为learning或automatic')
+        if text_source not in ('host','api'):raise ValueError('请选择当前宿主或第三方文字API')
+        if text_source=='api' and not TextProvider(self.settings.get('text_provider')).check()['ok']:raise ValueError('第三方文字API未配置完整或凭据未接入，请先配置任务')
         product=self.products.get(product_id);report=self.index.update();scope=chat_scope or {}
         sources=self._sources(product,scope);facts=self.products.facts(product_id,approved_only=True)
         for fact in facts:
@@ -86,7 +89,7 @@ class Engine:
         tid=uuid.uuid4().hex[:16]
         t={'task_id':tid,'product':product,'mode':mode,'state':'PREFLIGHT','stage':'PREFLIGHT','revision':0,'current_article':0,'articles':[],'topics':[],
            'sources':sources,'facts':facts,'coverage':report,'chat_scope':scope,'extra_requirements':extra_requirements,'results':{},'history':[],'approvals':[],'feedback':[],
-           'requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
+           'requests':[],'text_source':text_source,'text_requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
         with self._lock(tid): return self._save(t)
 
     def _check_action(self,t,aid,revision):
@@ -124,6 +127,8 @@ class Engine:
             if reflection: kind='NEEDS_MODEL'
             host_contract=assess_host(self.settings,stage=stage,mode=t['mode'],has_images=bool(a and a['image_count']))
             if state not in ('COMPLETED','PAUSED','PARTIAL') and host_contract['verification']=='declared_only' and not host_contract['ready']:kind='BLOCKED'
+            api_action=kind=='NEEDS_MODEL' and uses_text_api(t,stage,a)
+            if api_action:kind='NEEDS_TOOL'
             prompt_name={'PREFLIGHT':'preflight','ANALYZING':'analyze_chats','PLANNING':'plan_articles','WRITING':'write_article','TEXT_REVIEW':'review_text','IMAGE_PLANNING':'plan_images','IMAGE_REVIEW':'review_images','FINAL_REVIEW':'review_final'}.get(stage)
             if stage=='LEARNING_REVIEW':prompt_name='learn_from_feedback'
             prompt_path=Path(__file__).resolve().parents[2]/'prompts'/f'{prompt_name}.md'
@@ -146,7 +151,7 @@ class Engine:
             return {'protocol':PROTOCOL,'host_contract':host_contract,'task_id':tid,'action_id':t['action_id'],'expected_revision':t['revision'],'kind':kind,'stage':state if state in ('PAUSED','PARTIAL','WAITING_SELECTION','WAITING_COUNTS','NEEDS_CONFIG') else stage,
                     'object_id':a['article_id'] if a else tid,'prompt_template':prompt,'input_refs':sources,'context':context,'result_schema':SCHEMAS.get(stage),
                     'approval_required':state=='WAITING_APPROVAL' and not reflection,'content_hash':digest(a['results'] if a else t['results']),'error':t.get('error'),
-                    'output_path':t.get('output_path') if state=='COMPLETED' else None,'tool': 'export' if stage=='EXPORT' else 'run-image' if stage=='GENERATING_IMAGES' else None}
+                    'text_source':t.get('text_source','host'),'output_path':t.get('output_path') if state=='COMPLETED' else None,'tool': 'run-text' if api_action else 'export' if stage=='EXPORT' else 'run-image' if stage=='GENERATING_IMAGES' else None}
 
     def _applicable(self,t,a):
         rules=t['rules_snapshot']['rules'] if t.get('rules_snapshot') else []
@@ -204,13 +209,17 @@ class Engine:
                 for item in value: walk(item)
         walk(result)
 
-    def submit(self,tid,action_id,revision,result,*,actor='model',user_ref=None,producer=None):
+    def submit(self,tid,action_id,revision,result,*,actor='model',user_ref=None,producer=None,_text_request_id=None):
         producer=producer_identity(producer)
         if producer and actor!='model':raise ValueError('人工结果不能附带模型身份冒充模型审核')
         with self._lock(tid):
             t=self._load(tid);self._check_action(t,action_id,revision);stage=t['stage'];a=self._article(t)
             reflection=self._reflection(t,a) if t['state']=='WAITING_APPROVAL' else None
             actual_stage='LEARNING_REVIEW' if reflection else stage
+            if uses_text_api(t,actual_stage,a):
+                receipt=next((r for r in t.get('text_requests',[]) if r['request_id']==_text_request_id),None)
+                if not receipt or receipt['status']!='RECEIVED' or receipt['action_id']!=action_id or receipt['revision']!=revision or receipt.get('result')!=result:raise ValueError('本任务选择文字API；必须由run-text取得结果，不能由宿主替代')
+                receipt['status']='APPLIED'
             require_declared_capabilities(self.settings,stage=actual_stage,mode=t['mode'],has_images=bool(a and a['image_count']))
             if producer:t.setdefault('model_submissions',[]).append({'action_id':action_id,'revision':revision,'stage':actual_stage,'producer':producer,'identity_verification':'self_reported','at':now()})
             if reflection:
@@ -488,6 +497,7 @@ class Engine:
             t=self._load(tid)
             if t['state']=='COMPLETED': raise ValueError('成品历史不可覆盖，请fork-revision')
             if any(r['status'] in ('UNKNOWN','IN_FLIGHT') for r in t['requests']): raise ValueError('先解决未知收费请求')
+            if any(r['status'] not in ('APPLIED','RESOLVED') for r in t.get('text_requests',[])):raise ValueError('先核对并处理待决文字API请求')
             # Reanalysis is explicit; never reuse changed product evidence silently.
             self.index.update();t['history'].append({'reason':'explicit_refresh','user_ref':user_ref,'articles':copy.deepcopy(t['articles']),'sources':t['sources'],'rules_snapshot':t['rules_snapshot']})
             t['sources']=self._sources(t['product'],t['chat_scope']);t['facts']=self.products.facts(t['product']['product_id'],approved_only=True)
@@ -496,9 +506,17 @@ class Engine:
             t.pop('output_path',None);(self._path(tid)/'pause.json').unlink(missing_ok=True)
             return self._save(t)
 
-    def fork_revision(self,tid,feedback,*,user_ref,actor='user'):
+    def fork_revision(self,tid,feedback,*,user_ref,actor='user',text_source=None):
         require_user(actor,user_ref)
         original=self.status(tid)
-        t=self.start(original['product']['product_id'],'learning',user_ref=user_ref,chat_scope=original['chat_scope'],extra_requirements=feedback)
+        t=self.start(original['product']['product_id'],'learning',user_ref=user_ref,chat_scope=original['chat_scope'],extra_requirements=feedback,text_source=text_source)
         with self._lock(t['task_id']):
             t['parent_task_id']=tid;t['parent_output_path']=original.get('output_path');return self._save(t)
+
+    def run_text(self,tid):
+        from .text_api import run_text
+        return run_text(self,tid)
+
+    def resolve_text_request(self,tid,request_id,*,user_ref,actor='user'):
+        from .text_api import resolve_text_request
+        return resolve_text_request(self,tid,request_id,user_ref=user_ref,actor=actor)

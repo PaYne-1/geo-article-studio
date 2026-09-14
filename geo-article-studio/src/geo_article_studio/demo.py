@@ -214,7 +214,7 @@ def _simulated_result(action):
 
 def _run_mode(root, mode, service, references):
     engine, coverage = _setup(root, mode, service, references)
-    task = engine.start(PRODUCT_ID, mode, user_ref=SIMULATION_REF,
+    task = engine.start(PRODUCT_ID, mode, user_ref=SIMULATION_REF, text_source='host',
                         extra_requirements='OFFLINE SIMULATION：全部素材、用户交互、模型结果及图像审核均为测试夹具。')
     task_id = task['task_id']
     trace, revised, selection_calls = [], False, 0

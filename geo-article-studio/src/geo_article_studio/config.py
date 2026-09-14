@@ -84,6 +84,8 @@ def validate_settings(data: dict, production: bool = False) -> dict:
         raise ValueError('配置必须为 JSON 对象')
     _check_secrets(data)
     settings = _merge(copy.deepcopy(DEFAULT_SETTINGS), data)
+    if settings.get('text_provider') is not None and not isinstance(settings['text_provider'],dict):
+        raise ValueError('文字API配置text_provider必须为对象')
     if not isinstance(settings['libraries'], dict):
         raise ValueError('libraries 必须为对象')
     unknown = set(settings['libraries']) - set(LIBRARY_TYPES)

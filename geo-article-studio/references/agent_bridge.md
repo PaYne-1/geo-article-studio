@@ -1,6 +1,6 @@
 # 通用Agent桥接：geo.host.v1
 
-核心只依赖Python CLI，不导入Agent SDK、不启动多Agent框架、不自行调用文字模型API。宿主使用当前会话模型完成语义工作；Qwen是优先配置选项。
+核心只依赖Python CLI，不导入Agent SDK、不启动多Agent框架、按本轮用户选择使用当前宿主模型或已保存的第三方文字API。先读docs/文字模型配置与选择.md，start必须显式传--text-source host或api。
 
 ## 能力声明
 
@@ -22,7 +22,7 @@
 result必须满足当前schema，不是照抄空对象。producer可省略，记录是self_reported，不能证明身份。旧信封不带protocol/producer仍兼容。审核reviewer=model，旧qwen兼容。真人看图则reviewer=human、actor=user和真实user_ref，不能附producer冒充模型。
 
 3. `submit-result TASK_ID --file "绝对JSON路径"`。资料文字不得拼接shell命令；优先用文件工具写JSON，只向shell传固定命令及正确引用的路径。被拒绝后按具体错误重新生成；连续3次失败pause，不修改执行层来接受错误。
-4. NEEDS_USER展示并等待真实确认；NEEDS_TOOL执行内部CLI；BLOCKED展示host_contract.missing或具体错误。LEARNING_REVIEW是独立模型复盘动作，完成后回当前步骤批准。自动模式普通动作连续循环至完成/阻断。
+4. NEEDS_USER展示并等待真实确认；NEEDS_TOOL按tool执行run-text、run-image或export；BLOCKED展示host_contract.missing或具体错误。LEARNING_REVIEW是独立模型复盘动作，完成后回当前步骤批准。自动模式普通动作连续循环至完成/阻断。
 5. 完成CLI直接返回真实目录字符串，只把路径交用户；未完成JSON不是成功路径。
 
 ## 环境与迁移

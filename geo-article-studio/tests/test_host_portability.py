@@ -66,7 +66,7 @@ def test_generic_agent_full_zero_image_flow_records_model_provenance(engine):
 def test_declared_incompatible_host_is_blocked_before_task_creation(engine):
     engine.settings['host']={'agent':'chat-only','capabilities':{'file_io':False,'terminal':False,'structured_results':True,'human_confirmation':True}}
     with pytest.raises(ValueError,match='宿主|能力'):
-        engine.start('test-product','automatic',user_ref='user:start')
+        engine.start('test-product','automatic',text_source='host',user_ref='user:start')
     assert not (engine.root/'tasks').exists()
 
 def test_host_check_available_without_production_configuration(tmp_path):

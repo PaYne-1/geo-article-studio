@@ -293,13 +293,13 @@ def test_task_parent_symlink_cannot_escape_workspace(engine,tmp_path):
     try: task_parent.symlink_to(outside,target_is_directory=True)
     except OSError:pytest.skip('当前平台无创建符号链接权限')
     with pytest.raises(ValueError,match='路径|越界'):
-        engine.start('test-product','automatic',user_ref='user:real')
+        engine.start('test-product','automatic',text_source='host',user_ref='user:real')
     assert list(outside.iterdir())==[]
 
 def test_newly_detected_fact_conflict_invalidates_task_snapshot(engine,monkeypatch):
     fact={'fact_id':'test-fact','text':'虚构已批准事实','status':'approved'}
     monkeypatch.setattr(engine.products,'facts',lambda *a,**kw:[fact])
-    task=engine.start('test-product','automatic',user_ref='user:start')
+    task=engine.start('test-product','automatic',text_source='host',user_ref='user:start')
     monkeypatch.setattr(engine.products,'facts',lambda *a,**kw:[])
     with pytest.raises(ValueError,match='事实'):
         submit(engine,task['task_id'],{'understanding':'测试','source_ids':['S1'],'gaps':[]})

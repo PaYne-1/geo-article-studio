@@ -34,7 +34,7 @@ def submit(e,tid,result,actor='model'):
     return e.submit(tid,a['action_id'],a['expected_revision'],result,actor=actor,user_ref='user:test' if actor=='user' else None)
 
 def analyze(e,mode='automatic'):
-    t=e.start('test-product',mode,user_ref='user:start'); tid=t['task_id']
+    t=e.start('test-product',mode,text_source='host',user_ref='user:start'); tid=t['task_id']
     submit(e,tid,{'understanding':'虚构测试','source_ids':['S1'],'gaps':[]})
     if mode=='learning':
         a=e.next_action(tid);e.approve(tid,a['action_id'],a['expected_revision'],user_ref='user:approve')
@@ -86,7 +86,7 @@ def test_learning_revise_keeps_stage_stale_approval_and_restart(engine):
     assert e.next_action(tid)['stage']=='WRITING'
 
 def test_reject_wrong_action_model_approval_and_source(engine):
-    e=engine;t=e.start('test-product','learning',user_ref='user:start');tid=t['task_id'];a=e.next_action(tid)
+    e=engine;t=e.start('test-product','learning',text_source='host',user_ref='user:start');tid=t['task_id'];a=e.next_action(tid)
     with pytest.raises(ValueError): e.submit(tid,'wrong',a['expected_revision'],{'understanding':'x','source_ids':['S1'],'gaps':[]})
     with pytest.raises(ValueError): submit(e,tid,{'understanding':'x','source_ids':['invented'],'gaps':[]})
     submit(e,tid,{'understanding':'x','source_ids':['S1'],'gaps':[]});a=e.next_action(tid)

@@ -1,0 +1,17 @@
+{
+  "text_provider": {
+    "adapter": "openai_chat_compatible",
+    "base_url": null,
+    "endpoint": "/chat/completions",
+    "model": null,
+    "api_key_env": "GEO_TEXT_API_KEY",
+    "auth_type": "bearer",
+    "protocol_document": null,
+    "max_requests_per_task": null,
+    "max_tokens": 4096,
+    "timeout_seconds": 120,
+    "max_input_bytes": 262144,
+    "max_response_bytes": 2097152,
+    "allowed_local_hosts": []
+  }
+}
