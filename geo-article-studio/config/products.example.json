@@ -1,5 +1,5 @@
 {
-  "_note": "仅示范登记格式；不含218切面侠的任何参数。请将经过用户确认的真实产品登记复制到settings.products，并配置source_mappings。不要将此虚构例子当生产资料。",
+  "_note": "仅示范登记格式；不含218轻便侠的任何参数。请将经过用户确认的真实产品登记复制到settings.products，并配置source_mappings。不要将此虚构例子当生产资料。",
   "products": [
     {"product_id": "fictional-example", "name": "虚构示例产品", "version": "用户确认的版本", "source_ids": [], "image_source_ids": []}
   ],

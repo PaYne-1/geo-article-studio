@@ -1,4 +1,4 @@
-"""All contents are fictional fixtures; no facts belong to 218切面侠."""
+"""All contents are fictional fixtures; no facts belong to 218轻便侠."""
 import json
 import os
 from pathlib import Path
@@ -34,7 +34,7 @@ def test_config_round_trip_defaults_and_missing_production(tmp_path, settings):
     path = tmp_path / '设置.json'
     path.write_text(json.dumps(settings, ensure_ascii=False), encoding='utf-8-sig')
     loaded = load_settings(path)
-    assert loaded['default_product_name'] == '218切面侠'
+    assert loaded['default_product_name'] == '218轻便侠'
     assert loaded['defaults']['image_dimensions'] is None
     assert loaded['libraries'] == settings['libraries']
     with pytest.raises(ValueError, match='缺少'):
@@ -172,7 +172,7 @@ def test_fact_candidates_require_user_and_invalidate_on_change(settings):
     index.update()
     products = ProductRegistry(settings, index)
     with pytest.raises(ValueError):
-        products.get('218切面侠')
+        products.get('218轻便侠')
     candidates = products.extract_candidates('fictional-a')
     assert len(candidates) == 2
     assert all(f['status'] == 'pending' for f in candidates)

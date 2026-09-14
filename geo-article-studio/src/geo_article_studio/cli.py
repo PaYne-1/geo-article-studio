@@ -83,7 +83,7 @@ def run(args):
         atomic_json(args.config,config)
         load_settings(args.config)
         return {'saved':str(args.config.resolve()),'missing_libraries':[k for k,v in config['libraries'].items() if v is None]},0
-    if not args.config.is_file():raise ValueError('尚未配置；先运行form 配置资料库，再configure --file本地配置文件')
+    if not args.config.is_file():raise ValueError('尚未配置；先运行form 配置任务，再configure --file本地配置文件')
     settings=load_settings(args.config)
     if args.command=='doctor':
         result=doctor(settings);return result,0 if result['production_ready'] else 2
@@ -115,7 +115,7 @@ def run(args):
         pid=args.product_id
         if not pid:
             found=[x for x in products.list_products() if x['name']==settings['default_product_name']]
-            if len(found)!=1:raise ValueError('默认产品218切面侠尚未注册或版本不唯一；请选择实际产品，禁止替换为其他产品')
+            if len(found)!=1:raise ValueError('默认产品'+settings['default_product_name']+'尚未注册或版本不唯一；请选择实际产品，禁止替换为其他产品')
             pid=found[0]['product_id']
         result=e.start(pid,args.mode,user_ref=args.user_ref,chat_scope=read_json(args.scope_file) if args.scope_file else None,extra_requirements=args.requirements_file.read_text(encoding='utf-8') if args.requirements_file else '')
     elif cmd in ('status','next-action','run-image','export'):

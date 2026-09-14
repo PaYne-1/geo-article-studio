@@ -84,7 +84,7 @@ $skill = "$skills\geo-article-studio"
 $python = "$data\venv\Scripts\python.exe"
 & $python -m pip install "$skill"
 & $python "$skill\scripts\geo.py" --help
-& $python "$skill\scripts\geo.py" --config "$data\settings.json" form '配置资料库'
+& $python "$skill\scripts\geo.py" --config "$data\settings.json" form '配置任务'
 ```
 
 配置和资料来源继续遵循 [首次配置说明](安装与首次配置.md) 及技能内的表单与宿主契约。安装记录不会自动生成生产 `settings.json`。运行命令始终显式带实际 `--config`；宿主根据 `next-action` 读取提示词、收集真实用户批准并通过 `submit-result` 提交结构化输出，不能用宿主自写文本绕过状态和修订校验。

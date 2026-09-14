@@ -9,7 +9,7 @@ from pathlib import Path
 
 LIBRARY_TYPES = ('chat', 'product_info', 'reference_images', 'product_images')
 DEFAULT_SETTINGS = {
-    'schema_version': '1.0', 'default_product_name': '218切面侠',
+    'schema_version': '1.0', 'default_product_name': '218轻便侠',
     'libraries': dict.fromkeys(LIBRARY_TYPES), 'output_root': None,
     'workspace_root': None, 'user_path_mapping': None, 'rule_import_sources': [],
     'products': [], 'source_mappings': {},

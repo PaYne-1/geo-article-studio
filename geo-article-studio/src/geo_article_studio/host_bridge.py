@@ -1,35 +1,53 @@
 """Small direct-user router and strict host/model result contracts."""
 import re
 import jsonschema
+from .config import DEFAULT_SETTINGS, _check_secrets
 
-TRIGGERS={'配置资料库':'configure_libraries','配置API':'configure_api','开始任务':'start','开始学习任务':'start_learning','开始自动任务':'start_automatic','确认':'approve','确认下一步':'approve','暂停任务':'pause','查看规则':'rules','更新规则':'update_rules'}
+TRIGGERS={'配置任务':'configure_task','开始任务':'start'}
+TASK_COMMANDS={'确认':'approve','确认下一步':'approve','暂停任务':'pause','查看规则':'rules','更新规则':'update_rules'}
 
-def route(text,origin='user'):
+def route(text,origin='user',*,in_task=False):
     if origin!='user': return None
     value=text.strip()
     value=re.sub(r'^[/$]geo-article-studio\s*|^GEO\s*','',value)
-    if value.startswith(('修改：','修改:')): return 'revise'
-    if value.startswith('继续任务'): return 'resume'
-    for key in sorted(TRIGGERS,key=len,reverse=True):
-        if value==key or value.startswith(key+'\n') or value.startswith(key+' '): return TRIGGERS[key]
+    if in_task and value.startswith(('修改：','修改:')): return 'revise'
+    if in_task and value.startswith('继续任务'): return 'resume'
+    commands={**TRIGGERS,**(TASK_COMMANDS if in_task else {})}
+    for key in sorted(commands,key=len,reverse=True):
+        if value==key or value.startswith(key+'\n') or value.startswith(key+' '): return commands[key]
     return None
 
 def form_for(trigger,settings,provided=None):
     action=route(trigger); p=provided or {}; defaults=settings.get('defaults',{})
-    if action=='configure_libraries':
-        values={**settings.get('libraries',{}),'output_root':settings.get('output_root'),'rule_import_sources':settings.get('rule_import_sources')}; required=['chat','product_info','reference_images','product_images','output_root','rule_import_sources']
-    elif action=='configure_api':
-        values={'provider':None,'base_url':None,'protocol_document':None,'model':None,'api_key_env':'GEO_IMAGE_API_KEY','dimensions':defaults.get('image_dimensions'),'image_format':defaults.get('image_format','png'),'image_text_policy':defaults.get('image_text_policy'),'max_attempts':3,'max_requests':settings.get('limits',{}).get('max_image_requests_per_task')}; required=['provider','base_url','protocol_document','model','dimensions','image_text_policy','max_requests']
+    if action not in ('start','configure_task'):raise ValueError('入口仅支持开始任务或配置任务；确认、修改等只用于已加载任务')
+    if not isinstance(p,dict):raise ValueError('预填内容必须为对象')
+    _check_secrets(p)
+    product=settings.get('default_product_name',DEFAULT_SETTINGS['default_product_name'])
+    sections=[]
+    if action=='configure_task':
+        values={**dict.fromkeys(DEFAULT_SETTINGS['libraries']),**settings.get('libraries',{}),
+                'product':product,'output_root':settings.get('output_root'),'rule_import_sources':settings.get('rule_import_sources'),
+                'article_length':defaults.get('article_length'),'provider':None,'base_url':None,'protocol_document':None,'model':None,
+                'api_key_env':'GEO_IMAGE_API_KEY','supports_references':None,'dimensions':defaults.get('image_dimensions'),
+                'image_ratio':defaults.get('image_ratio'),'image_format':defaults.get('image_format','png'),
+                'image_text_policy':defaults.get('image_text_policy'),'max_attempts':settings.get('limits',{}).get('max_generation_attempts_per_image',3),
+                'max_requests':settings.get('limits',{}).get('max_image_requests_per_task')}
         configured=settings.get('image_provider') or {}
-        for key in ('base_url','model','api_key_env'):
+        for key in ('base_url','model','api_key_env','supports_references'):
             if configured.get(key) is not None:values[key]=configured[key]
         values['provider']=configured.get('adapter')
         values['protocol_document']=settings.get('image_protocol_verification')
-        values['max_attempts']=settings.get('limits',{}).get('max_generation_attempts_per_image',3)
+        sections=[{'id':'product','title':'产品与文章','fields':['product','article_length']},
+                  {'id':'libraries','title':'四库与保存位置','fields':['chat','product_info','reference_images','product_images','output_root','rule_import_sources']},
+                  {'id':'image_api','title':'图片API与规格','fields':['provider','base_url','protocol_document','model','api_key_env','supports_references','dimensions','image_ratio','image_format','image_text_policy','max_attempts','max_requests']}]
+        required=['product','article_length','chat','product_info','reference_images','product_images','output_root','rule_import_sources','provider','base_url','protocol_document','model','api_key_env','supports_references','dimensions','image_text_policy','max_requests']
     else:
-        values={'product':settings.get('default_product_name','218切面侠'),'mode':'learning' if action=='start_learning' else 'automatic' if action=='start_automatic' else defaults.get('mode'),'chat_scope':'当前产品相关记录及标注的通用品类记录','extra_requirements':''}; required=['product','mode']
+        values={'product':product,'mode':defaults.get('mode'),'chat_scope':'当前产品相关记录及标注的通用品类记录','extra_requirements':''}; required=['product','mode']
+    if set(p)-set(values):raise ValueError('预填含未知表单字段')
     values.update(p)
-    return {'action':action,'values':values,'missing':[k for k in required if values.get(k) in (None,'',[])]}
+    return {'action':action,'values':values,'missing':[k for k in required if values.get(k) in (None,'',[])],
+            'sections':sections,'choices':{'mode':['learning','automatic']} if action=='start' else {},
+            'credential_notice':'图片API需要配置；密钥仅通过本地环境变量或宿主安全凭据接入，不发送到聊天。表单只保存环境变量名。'}
 
 def obj(properties,required=None):
     return {'type':'object','properties':properties,'required':list(properties) if required is None else required,'additionalProperties':False}

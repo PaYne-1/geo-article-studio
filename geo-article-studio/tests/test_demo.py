@@ -44,7 +44,7 @@ def test_demo_two_modes_actual_indexes_http_and_exports(tmp_path):
         state = json.loads(Path(mode['state_path']).read_text(encoding='utf-8'))
         assert state['simulation'] is True
         assert state['config_snapshot']['simulation'] is True
-        assert state['product']['name'] != '218切面侠'
+        assert state['product']['name'] != '218轻便侠'
         assert all(ref.startswith('src_') for ref in state['sources'])
         assert state['rules_snapshot']['simulation'] is True
         assert state['rules_snapshot']['formal'] is False

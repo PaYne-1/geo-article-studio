@@ -7,7 +7,7 @@
 Git Bash 中的精确表单调用形式如下。这里三个变量必须先绑定宿主已经核实的绝对路径；`CONFIG` 即使文件还未创建也须是用户工作区中明确的配置路径。**脚本、Python、配置三个路径分别加双引号**，尤其 `D:/0-AI 项目/...` 中含空格；不能只给脚本路径加引号而让配置路径被 shell 拆开。
 
 ```bash
-"$PYTHON" "$SKILL/scripts/geo.py" --config "$CONFIG" form '配置资料库'
+"$PYTHON" "$SKILL/scripts/geo.py" --config "$CONFIG" form '配置任务'
 "$PYTHON" "$SKILL/scripts/geo.py" --config "$CONFIG" doctor
 ```
 
@@ -40,7 +40,7 @@ Git Bash 中的精确表单调用形式如下。这里三个变量必须先绑�
 
 `result` 必须满足当前返回的 result_schema，不可复用历史动作的 schema。人工输入通过宿主提交时 `actor=user` 且 user_ref 对应实际消息。执行层拒绝过期 revision、重复 action、无效来源等结果后，宿主先重新读取 `status` / `next-action`，不要覆盖旧状态重试。
 
-结构错误的重试必须把执行层的具体错误反馈给当前模型并重新生成，不能由宿主悄悄删除字段来伪装首轮通过。若 action_id 与 revision 没变，在同一动作上重试；变了就读取新状态。`additionalProperties=false` 表示没有列出的字段全部禁止。例如 PREFLIGHT 的 result 只允许 `understanding`、`source_ids`、`gaps`，不能把上下文里的 coverage_basis 复制成第四个结果字段。产品名直接取 `context.product.name` 并逐字保留，`218切面侠` 不能写成 `218 切面侠`。
+结构错误的重试必须把执行层的具体错误反馈给当前模型并重新生成，不能由宿主悄悄删除字段来伪装首轮通过。若 action_id 与 revision 没变，在同一动作上重试；变了就读取新状态。`additionalProperties=false` 表示没有列出的字段全部禁止。例如 PREFLIGHT 的 result 只允许 `understanding`、`source_ids`、`gaps`，不能把上下文里的 coverage_basis 复制成第四个结果字段。产品名直接取 `context.product.name` 并逐字保留，`218轻便侠` 不能写成 `218 轻便侠`。
 
 核心操作命令如下；Python、脚本、配置、JSON文件均使用实际绝对路径，TASK_ID/ID/N/REF 从当前状态和实际用户消息中取得：
 
@@ -63,7 +63,7 @@ python geo.py --config FILE approve TASK_ID --action-id ID --revision N --user-r
 
 ## 显式入口与自然语言
 
-显式入口 `/geo-article-studio 开始任务` 依赖 Hermes 已发现本技能。`-s geo-article-studio` 可用于 CLI预加载联调，但预加载不证明自然语言命中。技能中的“配置资料库”“配置API”“开始学习任务”“开始自动任务”等自然语言需要单独实测。其他技能同名时使用显式入口，不擅自改名或移除要求的原触发词。
+显式入口 `/geo-article-studio 开始任务` 依赖 Hermes 已发现本技能。`-s geo-article-studio` 可用于 CLI预加载联调，但预加载不证明自然语言命中。当前仅有“开始任务”“配置任务”两个启动词，其自然语言分发需按宿主单独实测。确认与修改等是已加载任务内的操作。其他技能同名时使用显式技能入口。
 
 ## 本机核实依据
 

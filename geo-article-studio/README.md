@@ -1,8 +1,10 @@
 # GEO图文生产助手
 
-可安装的通用 Agent 技能包（v1.1.0），默认产品显示名 **218切面侠**。Codex负责开发；Hermes、Codex、Claude Code 或具备文件、终端和人工确认能力的其他Agent负责运行。当前宿主模型完成对话、资料分析、策划、写作和独立语义审核，Qwen作为优先配置选项。Python负责四库检索、人工授权状态、文件校验和第三方图片API。带图自动审核另需已验证的视觉能力。
+可安装的通用 Agent 技能包（v1.2.0），默认产品显示名 **218轻便侠**。Codex负责开发；Hermes、Codex、Claude Code 或具备文件、终端和人工确认能力的其他Agent负责运行。当前宿主模型完成对话、资料分析、策划、写作和独立语义审核，Qwen作为优先配置选项。Python负责四库检索、人工授权状态、文件校验和第三方图片API。带图自动审核另需已验证的视觉能力。
 
 先看[多Agent安装与兼容性](docs/多Agent安装与兼容性.md)与[通用宿主协议](references/agent_bridge.md)。安装支持不等于真实联调通过，具体范围见验收记录。
+
+启动入口只有“开始任务”和“配置任务”。配置任务统一包含图片API和四库；开始任务后选择学习/自动模式。API密钥通过本地环境接入，不能发到聊天。
 
 请先看 [安装与首次配置](docs/安装与首次配置.md)、[日常操作示例](docs/日常操作示例.md)、[验收记录](docs/验收记录.md)、[已知限制](docs/已知限制.md)。图片协议说明在 [图片接口适配说明](docs/图片接口适配说明.md)。
 
@@ -12,7 +14,7 @@
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[test,documents]"
 .\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe scripts/geo.py form "开始自动任务"
+.\.venv\Scripts\python.exe scripts/geo.py form "开始任务"
 ```
 
 生产代码从自身位置加载资源，推荐用安装目录的`scripts/geo.py`；不要只单独复制src目录或单个SKILL.md。安装脚本完整复制包，不依赖Hermes Hub选择性下载未引用文件。
