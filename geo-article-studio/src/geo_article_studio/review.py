@@ -31,6 +31,9 @@ def check_text(article,facts,rules):
     return issues
 
 REVIEW_CHECKS={
+    'FACT_REVIEW':['claims','parameters','sources','data_policy_medical_safety','real_cases'],
+    'GEO_REVIEW':['title_intent','direct_answer','subquestion_coverage','heading_extractability','conclusion','length_structure'],
+    'CONTENT_REVIEW':['semantic_rules','privacy','distinctness','natural_language','paragraph_method','brand_natural','readability','spelling','copyright'],
     'TEXT_REVIEW':['claims','semantic_rules','privacy','distinctness','title_body'],
     'IMAGE_REVIEW':['visible_text','product_structure','people_actions','visual_rules','body_alignment'],
     'FINAL_REVIEW':['claims','semantic_rules','privacy','title_body','files','image_alignment'],

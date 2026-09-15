@@ -38,3 +38,27 @@
 调用`form 开始任务`。发送当前产品（默认218轻便侠）、模式（学习/自动）、文字来源text_source（host/api）、聊天范围及额外要求；文字来源每次显示两项并等待明确选择，不能预选上次结果；已有模式可预填，没有则请用户选，不自行决定。之后预检资料、分析真实主题，再让用户多选并填写每主题文章数、每篇图片数，0也必须明说。
 
 学习模式逐步确认、修改并复盘；自动模式在人工完成任务配置后持续推进。最终全部成功只返回真实成品根目录。缺配置或任务未完成时说明当前缺项，不能生成假成品路径。
+
+## v1.4：GEO需求表
+
+开始任务同时发送以下选项，已提供的内容预填：
+
+| 表单字段 | 用户填写/选择 | 转入任务brief |
+| --- | --- | --- |
+| original_geo_title | 原始GEO问题型标题，不能由Agent暗自确认 | original_title |
+| goals | 品牌曝光 / 型号种草 / 用户转化 / AI引用，多选 | goals |
+| platforms | 知乎、头条、搜狐、百家号、企鹅号、网易等，多选，可填其他 | platforms |
+| target_ais | DeepSeek、豆包、文心一言、元宝等，多选，可填其他 | target_ais |
+| article_type | short短篇600–800字 / long普通长文至少1000字 | article_type |
+
+用户还没有标题时，可先完成资料预检和主题分析，再确认每个主题的问题标题；select正式提交前必须补齐。Agent把用户确认值写入JSON，不让用户手填内部结构。模板config/geo_brief.example.json刻意留空，不能直接当已确认需求。
+
+全任务确实共用一个原始问题时，start加--brief-file指向已填写JSON（仅含上表第三列5个键）。多主题分别确认时，在select的每个主题行添加brief对象，覆盖全任务brief：
+
+```json
+[{"topic_id":"实际选中ID","article_count":1,"image_counts":[0],"brief":{"original_title":"用户确认的问题？","goals":["AI引用"],"platforms":["用户确认平台"],"target_ais":["用户确认AI"],"article_type":"short"}}]
+```
+
+以上仅示意内部映射，标题、目标、平台、AI及0图必须来自实际用户选择。不同原题不要共用一个未核对brief。人群、场景和3–5子问题在策划阶段基于来源拆解，学习模式展示确认。
+
+新任务篇幅只按short/long的内置范围执行，旧settings.defaults.article_length仅供历史任务兼容，不覆盖新标准。配置任务的article_length可保留旧值，无需为新任务另填min/max。图片数量仍由用户逐篇填，2–4张仅是建议。

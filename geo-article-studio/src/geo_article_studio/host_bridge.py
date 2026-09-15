@@ -2,6 +2,7 @@
 import re
 import jsonschema
 from .config import DEFAULT_SETTINGS, _check_secrets
+from .editorial import PLAN_SCHEMA, DRAFT_SCHEMA, GOALS, PLATFORMS, TARGET_AIS
 
 TRIGGERS={'配置任务':'configure_task','开始任务':'start'}
 TASK_COMMANDS={'确认':'approve','确认下一步':'approve','暂停任务':'pause','查看规则':'rules','更新规则':'update_rules'}
@@ -46,13 +47,15 @@ def form_for(trigger,settings,provided=None):
                   {'id':'libraries','title':'四库与保存位置','fields':['chat','product_info','reference_images','product_images','output_root','rule_import_sources']},
                   {'id':'image_api','title':'图片API与规格','fields':['provider','base_url','protocol_document','model','api_key_env','supports_references','dimensions','image_ratio','image_format','image_text_policy','max_attempts','max_requests']}]
         sections.append({'id':'text_api','title':'第三方文字API（可选，提前配置后长期保存）','fields':[key for key in values if key.startswith('text_')]})
-        required=['product','article_length','chat','product_info','reference_images','product_images','output_root','rule_import_sources','provider','base_url','protocol_document','model','api_key_env','supports_references','dimensions','image_text_policy','max_requests']
+        required=['product','chat','product_info','reference_images','product_images','output_root','rule_import_sources','provider','base_url','protocol_document','model','api_key_env','supports_references','dimensions','image_text_policy','max_requests']
     else:
         values={'product':product,'mode':defaults.get('mode'),'text_source':None,'chat_scope':'当前产品相关记录及标注的通用品类记录','extra_requirements':''}; required=['product','mode','text_source']
+        values.update(original_geo_title=None,goals=None,platforms=None,target_ais=None,article_type=None)
+        required+=['original_geo_title','goals','platforms','target_ais','article_type']
     if set(p)-set(values):raise ValueError('预填含未知表单字段')
     values.update(p)
     return {'action':action,'values':values,'missing':[k for k in required if values.get(k) in (None,'',[])],
-            'sections':sections,'choices':{'mode':['learning','automatic'],'text_source':['host','api']} if action=='start' else {},
+            'sections':sections,'choices':{'mode':['learning','automatic'],'text_source':['host','api'],'goals':GOALS,'platforms':PLATFORMS,'target_ais':TARGET_AIS,'article_type':['short','long']} if action=='start' else {},
             'text_options':[{'value':'host','label':'当前Agent默认模型','available':True},{'value':'api','label':'第三方文字API','model':text_config.get('model'),'available':text_check['ok'],'missing':text_check['errors']}],
             'text_notice':'文字API配置长期保存；每次任务明确选择来源。选择API将发送有限文字上下文并可能收费，失败不自动改用宿主。图片视觉审核仍由已验证宿主能力完成。',
             'credential_notice':'图片API需要配置；密钥仅通过本地环境变量或宿主安全凭据接入，不发送到聊天。表单只保存环境变量名。'}
@@ -74,6 +77,10 @@ SCHEMAS={
  'IMAGE_PLANNING':obj({'images':{'type':'array','items':IMAGE}}),
  'TEXT_REVIEW':REVIEW,'IMAGE_REVIEW':REVIEW,'FINAL_REVIEW':REVIEW,
 }
+SCHEMAS['PLANNING']['properties']['geo']=PLAN_SCHEMA
+SCHEMAS['WRITING']['properties']['geo']=DRAFT_SCHEMA
+SCHEMAS['IMAGE_PLANNING']['properties']['images']['items']['properties'].update(role={'enum':['cover','content_summary','real_scene','product_summary']},layout={'enum':['single']})
+for stage in ('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW'):SCHEMAS[stage]=REVIEW
 
 def validate_result(stage,result):
     try: jsonschema.validate(result,SCHEMAS[stage])

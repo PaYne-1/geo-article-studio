@@ -7,8 +7,9 @@
 - [完整源码与开发命令](geo-article-studio/README.md)
 - [多Agent安装与兼容性](geo-article-studio/docs/多Agent安装与兼容性.md)
 - [首次配置](geo-article-studio/docs/安装与首次配置.md)和[日常操作](geo-article-studio/docs/日常操作示例.md)
-- [v1.3可安装ZIP](dist/geo-article-studio-1.3.0.zip)和[SHA256](dist/geo-article-studio-1.3.0.zip.sha256)
-- [本次更新与测试](geo-article-studio/docs/v1.3更新与测试.md)和[已知限制](geo-article-studio/docs/已知限制.md)
+- [v1.4可安装ZIP](dist/geo-article-studio-1.4.0.zip)和[SHA256](dist/geo-article-studio-1.4.0.zip.sha256)
+- [本次更新与测试](geo-article-studio/docs/v1.4更新与测试.md)和[已知限制](geo-article-studio/docs/已知限制.md)
+- [最终ZIP安装验证](dist/geo-article-studio-1.4.0.validation.md)
 
 四库按需检索，人工多选主题并逐篇填写图数，学习模式确认、修改、复盘和规则持久化，自动模式完成配置后连续生成和独立审核。成品逐篇独立目录，标题TXT、正文TXT和实际图片分别保存。
 
@@ -17,3 +18,5 @@
 兼容安装不代表所有Agent实机通过。当前有有限Codex及Hermes交接证据，Claude Code真实会话和真实图片API尚未验证。详细范围以测试记录为准。
 
 开始任务后，每次选择当前Agent默认模型或已提前配置的第三方文字API。[文字模型配置与选择](geo-article-studio/docs/文字模型配置与选择.md)说明持久化、密钥接入和费用边界。
+
+已内置[完整GEO标准](geo-article-studio/references/geo_editorial_standards.md)，自动执行原题确认、核心答案、固定大纲、篇幅校验与事实/GEO/内容合规三轮审核。普通文章建议2–4图，仍保留人工逐篇决定数量；4图按封面、内容总结、场景、产品/总结顺序独立保存。

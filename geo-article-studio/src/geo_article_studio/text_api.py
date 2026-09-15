@@ -12,7 +12,7 @@ from .images import ImageProvider, ProviderError
 from .storage import atomic_json, task_lock
 from .learning import require_user, now
 
-TEXT_STAGES={'PREFLIGHT','ANALYZING','PLANNING','WRITING','TEXT_REVIEW','IMAGE_PLANNING','LEARNING_REVIEW','FINAL_REVIEW'}
+TEXT_STAGES={'PREFLIGHT','ANALYZING','PLANNING','WRITING','TEXT_REVIEW','FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW','IMAGE_PLANNING','LEARNING_REVIEW','FINAL_REVIEW'}
 
 def uses_text_api(task,stage,article=None):
     return task.get('text_source','host')=='api' and stage in TEXT_STAGES and not (stage=='FINAL_REVIEW' and article and article['image_count'])

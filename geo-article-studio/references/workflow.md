@@ -1,8 +1,10 @@
 # 执行状态
 
-PREFLIGHT → ANALYZING → WAITING_SELECTION/WAITING_COUNTS → PLANNING → WRITING → TEXT_REVIEW → IMAGE_PLANNING → GENERATING_IMAGES → IMAGE_REVIEW → FINAL_REVIEW → EXPORT。零图跳过三个图片阶段。每篇EXPORT后自动处理下一篇；全部校验发布后COMPLETED。
+v1.4新任务：PREFLIGHT → ANALYZING → WAITING_SELECTION/WAITING_COUNTS → PLANNING → WRITING → FACT_REVIEW → GEO_REVIEW → CONTENT_REVIEW → IMAGE_PLANNING → GENERATING_IMAGES → IMAGE_REVIEW → FINAL_REVIEW → EXPORT。零图跳过三个图片阶段。每篇EXPORT后自动处理下一篇；全部校验发布后COMPLETED。旧任务无editorial_version时仍使用TEXT_REVIEW，refresh后升级。
 
 学习模式在预检、当前篇策划、正文及独立自审、配图计划、实际图片审核、最终审核后WAITING_APPROVAL。主题与数量由select提交即批准选题配置。修改保留旧结果/审批历史并清理受影响结果，不能越级。
+
+新任务选题还要求用户确认geo_brief（原始问题标题、目标、平台、目标AI、short/long）。PLANNING先给核心答案和固定大纲，WRITING通过结构/字数检查后依次进入三个独立审核动作；学习模式每轮等待人工批准。正文修改回PLANNING重新策划，但正文反馈等CONTENT_REVIEW通过后才进入LEARNING_REVIEW复盘与确认，批准大纲不等于正文反馈完成。
 
 自动模式仍等待用户选择和逐篇数量；其余NEEDS_MODEL由宿主在当前会话执行，不让用户手工填JSON。独立审核失败有上限地修正文本，图片关键失败/UNKNOWN/预算上限暂停。局部问题默认pause_all；本版本不支持自动跳过失败篇目，已有完整篇保留并报告未完成。
 

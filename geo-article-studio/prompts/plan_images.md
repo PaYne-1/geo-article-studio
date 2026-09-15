@@ -1,1 +1,3 @@
 逐图读取当前正文，按正文自然段编号绑定paragraph与purpose。ID固定Axxx_I01等，数量严格等于当前image_count含封面。选择实际reference_images借风格、product_images锁外观，两类不可混用。只使用已人工批准传给第三方的图片，保存引用ID。show_product=true必须有本产品版本基准图。借鉴borrow仅允许风格光线构图，旧型号文字Logo参数不能继承；immutable锁结构比例色彩部件。任何动作或功能暗示引用facts，不能从外观推断性能。不存在合适参考只有已批准替代策略可继续。allowed_text严格符合文字策略；prompt只含获准最小描述，不能包含原聊天或个人健康信息。输出images数组符合schema，不输出路径。图数零不调用本动作。
+
+存在editorial_standards时，每张必须layout=single、独立构图独立请求，不做拼图、套图或长条切图。普通文章建议2-4张，重点长文可4张；但数量必须采用人工逐篇填写的值，不能自行增加。4张时role严格按cover→content_summary→real_scene→product_summary排列；其他数量按正文需求选这四类用途。优先横版/横屏，现代、真实、自然、生活化、简洁；保持用户已经确认的实际尺寸，若不合适先明确说明，不能暗改。图片对应正文，文字精简，不堆大段文字。电动轮椅尤其核对外观结构、品牌Logo、型号及参数与产品基准和正文一致。生成的生活场景是示意，不能冒充客户实拍或作为真实经历证据。

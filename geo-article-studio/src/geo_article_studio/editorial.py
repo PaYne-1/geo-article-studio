@@ -1,0 +1,92 @@
+"""Versioned built-in GEO editorial standards. No production disable switch."""
+import copy
+import re
+import jsonschema
+
+VERSION='geo-editorial.v1'
+REVIEW_STAGES=('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW')
+GOALS=['品牌曝光','型号种草','用户转化','AI引用']
+PLATFORMS=['知乎','头条','搜狐','百家号','企鹅号','网易']
+TARGET_AIS=['DeepSeek','豆包','文心一言','元宝']
+STANDARDS={
+    'version':VERSION,'title':'问题型标题，保留人工确认的原GEO核心搜索意图；平台变体须独立语义审核',
+    'core_answer':'写作前确定1-3句明确核心答案，含判断标准；全文围绕它展开',
+    'opening':'100-200字，先给结论再讲背景，直接回答标题',
+    'structure':'核心答案→3-5个核心子问题→真实场景/案例→品牌产品案例→2-4个FAQ→总结建议',
+    'paragraph':'结论→原因→事实/案例→用户建议；段落分开，每个小标题只解决一个问题',
+    'length':{'short':[600,800],'long_min':1000,'count_basis':'去除空白后的字符数（含标点及小标题），不得重复凑字数'},
+    'evidence':'论点有可核实事实、参数、数据或真实经验支撑；参数对应体验，不虚构数据、客户评价或案例',
+    'brand':'用户问题→使用需求→对应功能→产品案例；品牌作为解决问题的案例，避免硬广、夸大和高频重复',
+    'language':'减少模板开场、AI套话和机械重复关键词；禁止为凑字数重复表达',
+    'images':{'recommended_count':[2,4],'four_roles':['cover','content_summary','real_scene','product_summary'],'layout':'每张独立成图，禁止拼图、套图、长条切图','preference':'优先横版，现代、真实、自然、生活化、简洁；对应正文，图中文字精简','wheelchair':'外观、Logo、型号及参数与批准资料和正文一致'},
+    'reviews':['事实：品牌型号、重量尺寸续航刹车、数据政策及医疗/安全表述来源','GEO：直接回答标题、完整子问题、清晰小标题、便于AI提取、明确总结建议','内容合规：AI套话、重复、广告感、错字、夸大、违规词、版权及图文一致性'],
+}
+
+S={'type':'string','minLength':1}
+def obj(properties):return {'type':'object','properties':properties,'required':list(properties),'additionalProperties':False}
+def strings(minimum=1,maximum=None):
+    out={'type':'array','items':S,'minItems':minimum,'uniqueItems':True}
+    if maximum is not None:out['maxItems']=maximum
+    return out
+BRIEF_SCHEMA=obj({'original_title':S,'goals':{'type':'array','items':{'enum':GOALS},'minItems':1,'uniqueItems':True},'platforms':strings(),'target_ais':strings(),'article_type':{'enum':['short','long']}})
+KINDS=['answer','subquestion','scenario','product_case','faq','summary']
+PLAN_SCHEMA=obj({'core_answer':S,'subquestions':strings(3,5),'audience':S,'scenario':S,'sections':{'type':'array','items':obj({'kind':{'enum':KINDS},'heading':S})},'scenario_evidence':obj({'source_ids':strings()}),'product_evidence':obj({'fact_ids':strings()})})
+DRAFT_SCHEMA=obj({'opening':S,'sections':{'type':'array','items':obj({'kind':{'enum':KINDS},'heading':S,'text':S})},'faqs':{'type':'array','minItems':2,'maxItems':4,'items':obj({'question':S,'answer':S})}})
+
+def _validate(value,schema):
+    try:jsonschema.validate(value,schema)
+    except jsonschema.ValidationError:raise ValueError('GEO标准字段缺失或格式不正确') from None
+
+def char_count(text):return len(re.sub(r'\s','',text))
+def question_title(title):return isinstance(title,str) and title.strip().endswith(('？','?')) and '\n' not in title
+
+def validate_brief(brief):
+    _validate(brief,BRIEF_SCHEMA)
+    if not question_title(brief['original_title']):raise ValueError('请确认问题型原始GEO标题，不能悄悄更改核心问题')
+    return copy.deepcopy(brief)
+
+def expected_kinds(count):return ['answer']+['subquestion']*count+['scenario','product_case','faq','summary']
+
+def validate_plan(result,brief):
+    validate_brief(brief);geo=result.get('geo');_validate(geo,PLAN_SCHEMA)
+    if result['question']!=brief['original_title']:raise ValueError('策划核心问题必须保留已确认原GEO标题')
+    sentences=[s for s in re.split(r'[。！？!?]+',geo['core_answer']) if s.strip()]
+    if not 1<=len(sentences)<=3 or char_count(geo['core_answer'])>200:raise ValueError('核心答案须为1-3句话且可放入开头')
+    sections=geo['sections'];questions=geo['subquestions']
+    if [s['kind'] for s in sections]!=expected_kinds(len(questions)):raise ValueError('大纲必须依次覆盖答案、子问题、真实场景、产品案例、FAQ和建议')
+    if [s['heading'] for s in sections if s['kind']=='subquestion']!=questions:raise ValueError('每个核心子问题须对应独立小标题')
+    if len({s['heading'] for s in sections})!=len(sections):raise ValueError('小标题不能重复')
+    if result['outline']!=[s['heading'] for s in sections]:raise ValueError('大纲须与结构化章节一致')
+
+def render_body(geo):
+    return geo['opening']+'\n\n'+'\n\n'.join(s['heading']+'\n'+s['text'] for s in geo['sections'])
+
+def validate_draft(result,plan,brief):
+    validate_plan(plan,brief);geo=result.get('geo');_validate(geo,DRAFT_SCHEMA)
+    if not question_title(result['title']):raise ValueError('成稿标题必须为问题型标题；语义审核另核对核心意图')
+    if not 100<=char_count(geo['opening'])<=200:raise ValueError('开头必须为100-200字')
+    if not geo['opening'].startswith(plan['geo']['core_answer']):raise ValueError('开头必须先给出已确定核心答案')
+    if [{'kind':s['kind'],'heading':s['heading']} for s in geo['sections']]!=plan['geo']['sections'][1:]:raise ValueError('正文结构必须对应已确定大纲')
+    faq=next(s for s in geo['sections'] if s['kind']=='faq')
+    expected='\n\n'.join(x['question']+'\n'+x['answer'] for x in geo['faqs'])
+    if faq['text']!=expected or len({f['question'] for f in geo['faqs']})!=len(geo['faqs']):raise ValueError('FAQ必须实际呈现在正文中且不重复')
+    if result['body']!=render_body(geo):raise ValueError('正文必须与结构化段落一致，不能仅声明满足结构')
+    length=char_count(result['body'])
+    if brief['article_type']=='short' and not 600<=length<=800:raise ValueError('短篇须600-800字')
+    if brief['article_type']=='long' and length<1000:raise ValueError('普通长文须至少1000字')
+    paragraphs=[p.strip() for p in result['body'].split('\n\n') if char_count(p)>20]
+    if len(set(paragraphs))!=len(paragraphs):raise ValueError('禁止重复段落凑字数')
+
+def validate_images(result,count):
+    images=result['images']
+    if len(images)!=count or any(p.get('layout')!='single' for p in images):raise ValueError('每张图片必须独立成图，禁止拼图或长条切图')
+    roles=[p.get('role') for p in images]
+    if any(r not in STANDARDS['images']['four_roles'] for r in roles):raise ValueError('配图须明确正文用途')
+    if count==4 and roles!=STANDARDS['images']['four_roles']:raise ValueError('四图结构须为封面、内容总结、真实场景、产品或总结')
+
+def action_schema(base,stage,enabled):
+    schema=copy.deepcopy(base)
+    if not schema or not enabled:return schema
+    if stage in ('PLANNING','WRITING'):schema['required']=list(dict.fromkeys(schema['required']+['geo']))
+    if stage=='IMAGE_PLANNING':schema['properties']['images']['items']['required']+=['role','layout']
+    return schema

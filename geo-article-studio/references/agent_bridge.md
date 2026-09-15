@@ -2,6 +2,8 @@
 
 核心只依赖Python CLI，不导入Agent SDK、不启动多Agent框架、按本轮用户选择使用当前宿主模型或已保存的第三方文字API。先读docs/文字模型配置与选择.md，start必须显式传--text-source host或api。
 
+v1.4新增三个独立文本审核动作FACT_REVIEW/GEO_REVIEW/CONTENT_REVIEW，host和api两条文字路径都依次执行。先按forms.md映射并确认geo_brief，遵循next-action给出的editorial_standards、prompt_template和result_schema。不得沿用旧TEXT_REVIEW单步代替三轮。完整要求见geo_editorial_standards.md。
+
 ## 能力声明
 
 将config/host.example.json合并到运行配置。host.agent可以是hermes、codex、claude-code或其他标识；host.model记录实际模型，不知道则保持null。capabilities使用true/false/null：file_io、terminal、structured_results、human_confirmation，自动图片审核另需visual_review及visual_verification_ref。null是未确认，不等于true。

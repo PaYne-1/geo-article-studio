@@ -27,7 +27,15 @@ def engine(tmp_path):
     settings={'workspace_root':str(tmp_path/'work'),'output_root':str(tmp_path/'out'),'defaults':{'article_length':{'min':1,'max':1000}},'limits':{'max_text_revision_attempts':3,'max_generation_attempts_per_image':3},'host':{'visual_capability':False},'partial_policy':'pause_all'}
     r=tmp_path/'rules.json';r.write_text(json.dumps({'formal':True,'version':'1','rules':[{'rule_id':'R1','scope':'global','target_id':None,'type':'hard_ban','content':'禁止虚构','terms':['测试违禁词'],'check_method':'语义','severity':'hard'}]}),encoding='utf-8')
     RuleStore(tmp_path/'work').import_file(r,user_ref='user:rules')
-    return Engine(settings,index=Index(tmp_path),products=Products())
+    class LegacySnapshotEngine(Engine):
+        """Exercise pre-v1.4 persisted task compatibility; new standards use the real Engine in test_editorial."""
+        def start(self,*args,**kwargs):
+            from geo_article_studio.storage import atomic_json
+            task=super().start(*args,**kwargs)
+            task.pop('editorial_version',None)
+            atomic_json(self._path(task['task_id'])/'state.json',task)
+            return task
+    return LegacySnapshotEngine(settings,index=Index(tmp_path),products=Products())
 
 def submit(e,tid,result,actor='model'):
     a=e.next_action(tid)

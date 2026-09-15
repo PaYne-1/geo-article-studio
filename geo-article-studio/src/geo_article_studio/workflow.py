@@ -14,6 +14,7 @@ from .host_bridge import SCHEMAS, validate_result
 from .review import check_text, validate_review
 from .hosts import PROTOCOL, assess_host, require_declared_capabilities, visual_available, producer_identity
 from .text_api import TextProvider, uses_text_api
+from . import editorial
 
 def digest(value):
     return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
@@ -76,12 +77,13 @@ class Engine:
             if lib=='chat': rows.extend(self.index.search(scope.get('query',''),library_type=lib,product_id='general',limit=20,**{k:v for k,v in scope.items() if k!='query'}))
         return {r['source_id']:r for r in rows}
 
-    def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements='',text_source=None):
+    def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements='',text_source=None,geo_brief=None):
         require_user(actor,user_ref)
         require_declared_capabilities(self.settings,mode=mode)
         if mode not in ('automatic','learning'): raise ValueError('模式必须为learning或automatic')
         if text_source not in ('host','api'):raise ValueError('请选择当前宿主或第三方文字API')
         if text_source=='api' and not TextProvider(self.settings.get('text_provider')).check()['ok']:raise ValueError('第三方文字API未配置完整或凭据未接入，请先配置任务')
+        if geo_brief is not None:geo_brief=editorial.validate_brief(geo_brief)
         product=self.products.get(product_id);report=self.index.update();scope=chat_scope or {}
         sources=self._sources(product,scope);facts=self.products.facts(product_id,approved_only=True)
         for fact in facts:
@@ -89,7 +91,7 @@ class Engine:
         tid=uuid.uuid4().hex[:16]
         t={'task_id':tid,'product':product,'mode':mode,'state':'PREFLIGHT','stage':'PREFLIGHT','revision':0,'current_article':0,'articles':[],'topics':[],
            'sources':sources,'facts':facts,'coverage':report,'chat_scope':scope,'extra_requirements':extra_requirements,'results':{},'history':[],'approvals':[],'feedback':[],
-           'requests':[],'text_source':text_source,'text_requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
+           'requests':[],'editorial_version':editorial.VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
         with self._lock(tid): return self._save(t)
 
     def _check_action(self,t,aid,revision):
@@ -130,6 +132,7 @@ class Engine:
             api_action=kind=='NEEDS_MODEL' and uses_text_api(t,stage,a)
             if api_action:kind='NEEDS_TOOL'
             prompt_name={'PREFLIGHT':'preflight','ANALYZING':'analyze_chats','PLANNING':'plan_articles','WRITING':'write_article','TEXT_REVIEW':'review_text','IMAGE_PLANNING':'plan_images','IMAGE_REVIEW':'review_images','FINAL_REVIEW':'review_final'}.get(stage)
+            if stage in editorial.REVIEW_STAGES:prompt_name={'FACT_REVIEW':'review_facts','GEO_REVIEW':'review_geo','CONTENT_REVIEW':'review_content'}[stage]
             if stage=='LEARNING_REVIEW':prompt_name='learn_from_feedback'
             prompt_path=Path(__file__).resolve().parents[2]/'prompts'/f'{prompt_name}.md'
             if prompt_name and not prompt_path.exists():prompt_path=Path(sys.prefix)/'share'/'geo-article-studio'/'prompts'/f'{prompt_name}.md'
@@ -143,13 +146,16 @@ class Engine:
             context={'product':t['product'],'facts':t['facts'],'sources':sources,'coverage':t['coverage'],'topics':t['topics'],
                      'article':a,'specifications':self.settings.get('defaults',{}),'extra_requirements':t['extra_requirements'],'rules':self._applicable(t,a),'feedback':[f for f in t['feedback'] if not a or f['object_id']==a['article_id']],
                      'other_articles':[{'angle':x['angle'],'body':x['results'].get('WRITING',{}).get('body','')} for x in t['articles'] if x!=a]}
+            if t.get('editorial_version'):
+                context['editorial_standards']=editorial.STANDARDS
+                context['geo_brief']=a.get('geo_brief') if a else t.get('geo_brief')
             if stage in ('IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW') and a and a['image_count']:
                 refs={sid for p in a['results'].get('IMAGE_PLANNING',{}).get('images',[]) for sid in p['reference_image_ids']+p['product_image_ids']}
                 context['visual_inputs']={'generated':a['images'],'references':[{'source_id':sid,'path':str(self._source_path(t['sources'][sid])),'hash':t['sources'][sid]['hash']} for sid in refs],'capability_verification_ref':self.settings.get('host',{}).get('visual_verification_ref')}
                 context['image_authorizations']=self.settings.get('image_authorizations',{})
                 context['reference_fallback']=self.settings.get('reference_fallback')
             return {'protocol':PROTOCOL,'host_contract':host_contract,'task_id':tid,'action_id':t['action_id'],'expected_revision':t['revision'],'kind':kind,'stage':state if state in ('PAUSED','PARTIAL','WAITING_SELECTION','WAITING_COUNTS','NEEDS_CONFIG') else stage,
-                    'object_id':a['article_id'] if a else tid,'prompt_template':prompt,'input_refs':sources,'context':context,'result_schema':SCHEMAS.get(stage),
+                    'object_id':a['article_id'] if a else tid,'prompt_template':prompt,'input_refs':sources,'context':context,'result_schema':editorial.action_schema(SCHEMAS.get(stage),stage,bool(t.get('editorial_version'))),
                     'approval_required':state=='WAITING_APPROVAL' and not reflection,'content_hash':digest(a['results'] if a else t['results']),'error':t.get('error'),
                     'text_source':t.get('text_source','host'),'output_path':t.get('output_path') if state=='COMPLETED' else None,'tool': 'run-text' if api_action else 'export' if stage=='EXPORT' else 'run-image' if stage=='GENERATING_IMAGES' else None}
 
@@ -167,10 +173,16 @@ class Engine:
                 if any(x not in {r['topic_id'] for r in t['topics']} for x in selection): raise ValueError('未知主题')
                 t['selected_topics']=selection;t['state']='WAITING_COUNTS';return self._save(t)
             articles=validate_selection(t['topics'],selection)
+            if t.get('editorial_version'):
+                for article in articles:
+                    row=next(r for r in selection if r['topic_id']==article['topic_id'])
+                    article['geo_brief']=editorial.validate_brief(row.get('brief',t.get('geo_brief')))
+                    article['geo_brief_user_ref']=user_ref
             if any(next(x for x in t['topics'] if x['topic_id']==a['topic_id'])['status']!='ready' for a in articles): raise ValueError('所选主题依据不足')
             missing=[];d=self.settings.get('defaults',{});num=sum(a['image_count'] for a in articles)
-            if not isinstance(d.get('article_length'),dict) or any(type(d['article_length'].get(k)) is not int or d['article_length'][k]<1 for k in ('min','max')): missing.append('defaults.article_length {min,max}')
-            elif d['article_length']['max']<d['article_length']['min']: missing.append('article_length范围')
+            if not t.get('editorial_version'):
+                if not isinstance(d.get('article_length'),dict) or any(type(d['article_length'].get(k)) is not int or d['article_length'][k]<1 for k in ('min','max')): missing.append('defaults.article_length {min,max}')
+                elif d['article_length']['max']<d['article_length']['min']: missing.append('article_length范围')
             if not self.output: missing.append('output_root')
             if num:
                 dims=d.get('image_dimensions');ratio=d.get('image_ratio')
@@ -245,14 +257,17 @@ class Engine:
                     elif topic['count_basis']=='fragment' and topic['verified_count']!=len({(x['hash'],digest(x['location'])) for x in rows}): raise ValueError('片段统计不正确')
                     elif topic['count_basis']=='unknown' and topic['verified_count'] is not None: raise ValueError('未知统计不能填数字')
             if stage=='PLANNING' and result['angle']!=a['angle']: raise ValueError('策划角度必须与所选独立角度一致；更换需人工修改')
+            if t.get('editorial_version') and stage=='PLANNING':editorial.validate_plan(result,a['geo_brief'])
             if stage=='WRITING':
                 issues=check_text(result,t['facts'],self._applicable(t,a))
-                length=self.settings['defaults']['article_length']
-                if not length['min']<=len(result['body'])<=length['max']: issues.append('正文长度超出已配置范围')
+                if t.get('editorial_version'):editorial.validate_draft(result,a['results']['PLANNING'],a['geo_brief'])
+                else:
+                    length=self.settings['defaults']['article_length']
+                    if not length['min']<=len(result['body'])<=length['max']: issues.append('正文长度超出已配置范围')
                 if issues: raise ValueError('文本确定性检查失败：'+'；'.join(issues))
             if stage=='IMAGE_PLANNING': self._validate_image_plan(t,a,result)
-            if stage in ('TEXT_REVIEW','IMAGE_REVIEW','FINAL_REVIEW'):
-                if stage=='TEXT_REVIEW':
+            if stage in ('TEXT_REVIEW','IMAGE_REVIEW','FINAL_REVIEW',*editorial.REVIEW_STAGES):
+                if stage in ('TEXT_REVIEW',*editorial.REVIEW_STAGES):
                     issues=check_text(a['results']['WRITING'],t['facts'],self._applicable(t,a))
                     if issues: raise ValueError('正式文本校验失败')
                 passed=validate_review(stage,result,visual_capable=visual_available(self.settings),has_images=bool(a['image_count']),mode=t['mode'])
@@ -260,7 +275,7 @@ class Engine:
                     if set(result['viewed_image_ids'])!=set(a['images']): raise ValueError('视觉审核未覆盖当前实际图片')
                 if not passed:
                     t['history'].append({'stage':stage,'object_id':a['article_id'],'revision':t['revision'],'result':result})
-                    if stage=='TEXT_REVIEW' and a['text_attempts']<self.settings.get('limits',{}).get('max_text_revision_attempts',3):
+                    if stage in ('TEXT_REVIEW',*editorial.REVIEW_STAGES) and a['text_attempts']<self.settings.get('limits',{}).get('max_text_revision_attempts',3):
                         a['text_attempts']+=1;a['review_feedback']=result;t['stage']=t['state']='WRITING'
                     else: t['resume_state']=stage;t['state']='PAUSED';t['error']='审核未通过或存在不确定项；请处理后继续'
                     return self._save(t)
@@ -270,14 +285,14 @@ class Engine:
             for f in t['feedback']:
                 if f['stage']==stage and f['status']=='pending_revision': f.update(new_revision=t['revision']+1,status='revised_waiting_approval',corrective_action='按当前反馈重新生成并交由独立审核',reason='用户反馈；具体语义原因由宿主复盘')
             if stage=='ANALYZING': t['topics']=result['topics'];t['state']='WAITING_SELECTION'
-            elif t['mode']=='learning' and stage in ('PREFLIGHT','PLANNING','TEXT_REVIEW','IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW'):
+            elif t['mode']=='learning' and stage in ('PREFLIGHT','PLANNING','TEXT_REVIEW','IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW',*editorial.REVIEW_STAGES):
                 t['state']='WAITING_APPROVAL'
             else: self._advance(t)
             return self._save(t)
 
     def _advance(self,t):
         stage=t['stage'];a=self._article(t)
-        next_stage={'PREFLIGHT':'ANALYZING','PLANNING':'WRITING','WRITING':'TEXT_REVIEW','TEXT_REVIEW':'IMAGE_PLANNING' if a and a['image_count'] else 'FINAL_REVIEW',
+        next_stage={'PREFLIGHT':'ANALYZING','PLANNING':'WRITING','WRITING':'FACT_REVIEW' if t.get('editorial_version') else 'TEXT_REVIEW','FACT_REVIEW':'GEO_REVIEW','GEO_REVIEW':'CONTENT_REVIEW','CONTENT_REVIEW':'IMAGE_PLANNING' if a and a['image_count'] else 'FINAL_REVIEW','TEXT_REVIEW':'IMAGE_PLANNING' if a and a['image_count'] else 'FINAL_REVIEW',
                     'IMAGE_PLANNING':'GENERATING_IMAGES','GENERATING_IMAGES':'IMAGE_REVIEW','IMAGE_REVIEW':'FINAL_REVIEW','FINAL_REVIEW':'EXPORT'}[stage]
         t['stage']=t['state']=next_stage
 
@@ -307,14 +322,25 @@ class Engine:
             a=self._article(t);stage=t['stage'];target=a['results'] if a else t['results']
             if image_id and (not a or image_id not in a['images'] or stage not in ('IMAGE_REVIEW','FINAL_REVIEW','EXPORT')): raise ValueError('只能修改当前已生成图片ID')
             revise_stage={'TEXT_REVIEW':'WRITING','IMAGE_REVIEW':'IMAGE_PLANNING','FINAL_REVIEW':'WRITING','EXPORT':'WRITING'}.get(stage,stage)
+            if t.get('editorial_version') and stage in ('WRITING','TEXT_REVIEW','FINAL_REVIEW','EXPORT',*editorial.REVIEW_STAGES):revise_stage='PLANNING'
             if image_id: revise_stage='IMAGE_PLANNING'
+            # Replanning is a prerequisite; body feedback is resolved only after
+            # a new draft has passed all three editorial review rounds.
+            feedback_stage='CONTENT_REVIEW' if t.get('editorial_version') and revise_stage=='PLANNING' and stage!='PLANNING' else revise_stage
             if revise_stage not in SCHEMAS: raise ValueError('当前对象需先完成配置/选题')
             t['history'].append({'revision':revision,'object_id':a['article_id'] if a else tid,'results':copy.deepcopy(target)})
             if a:
                 if revise_stage=='IMAGE_PLANNING':a['previous_image_plan']=copy.deepcopy(a['results'].get('IMAGE_PLANNING'))
-                order=['PLANNING','WRITING','TEXT_REVIEW','IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW']
+                order=['PLANNING','WRITING','TEXT_REVIEW',*editorial.REVIEW_STAGES,'IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW']
                 if revise_stage in order:
-                    for s in order[order.index(revise_stage):]: a['results'].pop(s,None)
+                    invalidated=order[order.index(revise_stage):]
+                    for s in invalidated:a['results'].pop(s,None)
+                    if t.get('editorial_version'):
+                        for prior in t['feedback']:
+                            if prior['object_id']==a['article_id'] and prior['stage'] in invalidated and prior['status']=='revised_waiting_approval':
+                                t['history'].append({'reason':'feedback_revision_invalidated','revision':revision,'feedback':copy.deepcopy(prior)})
+                                prior.update(status='pending_revision',new_revision=None,reason='待当前修订稿重新验证',confirmed_at=None)
+                                prior.pop('reflection',None)
                 if image_id:a['images'].pop(image_id)
                 else:a['images']={}
                 a['revision']+=1
@@ -322,7 +348,7 @@ class Engine:
             if scope=='global': target_id=None
             elif target_id is None: target_id={'article':a['article_id'] if a else tid,'product':t['product']['product_id'],'topic':a['topic_id'] if a else None}.get(scope)
             rule=self.rules.propose({'scope':scope,'target_id':target_id,'task_id':tid if scope in ('article','topic') else None,'type':'writing_preference' if revise_stage in ('WRITING','PLANNING') else 'image_preference','content':feedback,'severity':'warning','check_method':'对照反馈进行语义/视觉检查'},fid)
-            t['feedback'].append({'feedback_id':fid,'task_id':tid,'object_id':a['article_id'] if a else tid,'image_id':image_id,'stage':revise_stage,'old_revision':revision,'new_revision':None,'problem':feedback,'feedback':feedback,'reason':'待验证','corrective_action':'重新生成受影响对象并复审','proposed_rule_id':rule['rule_id'],'scope':scope,'target_id':target_id,'status':'pending_revision','user_ref':user_ref,'confirmed_at':None})
+            t['feedback'].append({'feedback_id':fid,'task_id':tid,'object_id':a['article_id'] if a else tid,'image_id':image_id,'stage':feedback_stage,'old_revision':revision,'new_revision':None,'problem':feedback,'feedback':feedback,'reason':'待验证','corrective_action':'重新生成受影响对象并复审','proposed_rule_id':rule['rule_id'],'scope':scope,'target_id':target_id,'status':'pending_revision','user_ref':user_ref,'confirmed_at':None})
             # A proposal must not invalidate active snapshots, but is available as current-object feedback.
             if t.get('rules_snapshot'): t['rules_snapshot']=self.rules.snapshot(t['product']['product_id'])
             t['stage']=t['state']=revise_stage;t['error']=None
@@ -351,6 +377,7 @@ class Engine:
 
     def _validate_image_plan(self,t,a,result):
         images=result['images'];d=self.settings['defaults']
+        if t.get('editorial_version'):editorial.validate_images(result,a['image_count'])
         if len(images)!=a['image_count'] or len({x['image_id'] for x in images})!=len(images): raise ValueError('图片计划数量或ID不正确')
         paragraphs=a['results']['WRITING']['body'].split('\n\n')
         for i,p in enumerate(images,1):
@@ -457,6 +484,11 @@ class Engine:
             if t['state']!='EXPORT': raise ValueError('尚未通过当前文章终审')
             self._check_snapshot(t);a=self._article(t)
             if len(a['images'])!=a['image_count']: raise ValueError('图片文件数与任务不符')
+            if t.get('editorial_version'):
+                editorial.validate_draft(a['results']['WRITING'],a['results']['PLANNING'],a['geo_brief'])
+                for review_stage in editorial.REVIEW_STAGES:
+                    review=a['results'].get(review_stage)
+                    if not review or not validate_review(review_stage,review):raise ValueError('GEO三轮独立审核尚未全部通过')
             if not t.get('output_path'):
                 stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f');t['output_path']=str(self.output/f'{stamp}_{safe_name(t["product"]["name"])}_{tid}')
             staging=self._path(tid)/'staging'/a['article_id']/f'v{a["revision"]}';staging.mkdir(parents=True,exist_ok=True)
@@ -502,6 +534,7 @@ class Engine:
             self.index.update();t['history'].append({'reason':'explicit_refresh','user_ref':user_ref,'articles':copy.deepcopy(t['articles']),'sources':t['sources'],'rules_snapshot':t['rules_snapshot']})
             t['sources']=self._sources(t['product'],t['chat_scope']);t['facts']=self.products.facts(t['product']['product_id'],approved_only=True)
             t['rules_snapshot']=None;t['articles']=[];t['topics']=[];t['current_article']=0;t['results']={};t['stage']=t['state']='PREFLIGHT';t['config_snapshot']=copy.deepcopy(self.settings);t['error']=None
+            t['editorial_version']=editorial.VERSION
             # A new delivery root prevents collisions with articles published before refresh.
             t.pop('output_path',None);(self._path(tid)/'pause.json').unlink(missing_ok=True)
             return self._save(t)

@@ -216,6 +216,9 @@ def _run_mode(root, mode, service, references):
     engine, coverage = _setup(root, mode, service, references)
     task = engine.start(PRODUCT_ID, mode, user_ref=SIMULATION_REF, text_source='host',
                         extra_requirements='OFFLINE SIMULATION：全部素材、用户交互、模型结果及图像审核均为测试夹具。')
+    # This historical simulation intentionally exercises pre-v1.4 task snapshots.
+    task.pop('editorial_version', None)
+    atomic_json(engine._path(task['task_id']) / 'state.json', task)
     task_id = task['task_id']
     trace, revised, selection_calls = [], False, 0
     for _ in range(200):

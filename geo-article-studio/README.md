@@ -1,6 +1,6 @@
 # GEO图文生产助手
 
-可安装的通用 Agent 技能包（v1.3.0），默认产品显示名 **218轻便侠**。Codex负责开发；Hermes、Codex、Claude Code 或具备文件、终端和人工确认能力的其他Agent负责运行。宿主负责对话，每次开始任务由用户选择当前宿主模型或提前保存的第三方文字API进行资料分析、策划、写作和独立语义审核。Python负责四库检索、人工授权状态、文件校验和第三方图片API。带图自动审核另需已验证的视觉能力。
+可安装的通用 Agent 技能包（v1.4.0），默认产品显示名 **218轻便侠**。Codex负责开发；Hermes、Codex、Claude Code 或具备文件、终端和人工确认能力的其他Agent负责运行。宿主负责对话，每次开始任务由用户选择当前宿主模型或提前保存的第三方文字API进行资料分析、策划、写作和独立语义审核。Python负责四库检索、人工授权状态、文件校验和第三方图片API。带图自动审核另需已验证的视觉能力。
 
 先看[多Agent安装与兼容性](docs/多Agent安装与兼容性.md)与[通用宿主协议](references/agent_bridge.md)。安装支持不等于真实联调通过，具体范围见验收记录。
 
@@ -30,3 +30,7 @@ python -m venv .venv
 demo仅使用虚构测试产品、脚本模拟用户/Qwen/视觉判定，以及本地HTTP返回的Pillow测试图。任何demo输出均为模拟结果，不是真实产品成品，不代表Hermes或收费图片API已通过。
 
 第三方文字API的持久化设置、启动选项与限制见[文字模型配置与选择](docs/文字模型配置与选择.md)。
+
+v1.4内置[完整GEO编辑标准](references/geo_editorial_standards.md)：用户确认原题、目标、平台、目标AI与篇幅；先核心答案，固定文章结构；600–800字短篇/至少1000字长文；事实、GEO、内容合规三轮独立审核；四图独立生成。需求模板见config/geo_brief.example.json，字段映射见references/forms.md。新任务无需另填旧article_length范围。
+
+历史demo保留旧任务快照，用于兼容回归，不演示v1.4强制GEO结构。新标准的离线生产、学习、文字HTTP和四图HTTP测试在tests/test_editorial.py；真实模型质量和厂商API验证范围见[本次测试记录](docs/v1.4更新与测试.md)。
