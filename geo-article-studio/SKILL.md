@@ -44,8 +44,8 @@ metadata:
 3. NEEDS_MODEL：当前宿主模型执行此独立动作，把JSON文件交submit-result TASK_ID --file。审核使用reviewer=model，旧qwen值仅作向后兼容。可通过producer记录实际agent/model；该字段是自报信息而非强认证。不得让用户逐个手填模型JSON，不添加schema没有的字段。被拒绝后读取具体原因纠正，连续3次失败则pause并报告，不绕过程序。
 4. NEEDS_USER：展示对象、版本、内容哈希与结果并等待。学习模式逐步确认；修改调用revise并停在当前步骤，重新生成/审核后还必须完成LEARNING_REVIEW复盘，才能展示并批准。长期规则明确范围且人工批准后激活；actor/user_ref只能来自当前真实用户输入。
 5. 主题分析必须从聊天库真实客户记录中识别高频且影响决策的关注点，并生成互不重复的问题型钩子标题候选。让用户人工多选标题，再填每主题篇数及逐篇图数；多选即确认对应标题。目标、平台、目标AI、短篇/长文沿用开始任务时的人工选择，select --file提交。完整任务配置就是本轮自动生产授权，普通阶段连续推进，不反复询问继续。
-6. NEEDS_TOOL按tool运行run-text、run-image或export。run-text使用当前任务选择的第三方文字API，结果经原审核门；不能由宿主编造API结果或失败后偷偷换模型。文字API不收图片，图像审核和带图最终联合审核仍由宿主实际看图；自动图文缺真实视觉能力即阻断，学习模式可由用户看图并提交human结果，不能写成AI已验。
-7. BLOCKED、错误、缺事实/规则、未知收费或上限时保存并说明缺项。pause/resume管理断点；图片UNKNOWN先核对再resolve-request/recover-image。文字API错误不自动重试，读取text_requests，用户核对结果和收费并同意重试后才resolve-text-request；已有RECEIVED响应且内容阶段未变时run-text恢复提交不重新收费。配置/事实/规则变化用refresh重审；已完成稿修改用fork-revision保留旧成品并重新选择文字来源。
+6. NEEDS_TOOL按tool运行run-text、run-image或export。host来源由当前宿主模型完成NEEDS_MODEL动作；api来源由run-text调用已配置第三方文字API。两条路径经过同一审核门，只有用户明确调用switch-text-source时才能切换。文字API不收图片，图像审核和带图最终联合审核仍由宿主实际看图；自动图文缺真实视觉能力即阻断，学习模式可由用户看图并提交human结果，不能写成AI已验。
+7. BLOCKED、错误、缺事实/规则、未知收费或上限时保存并说明缺项。pause/resume管理断点；图片UNKNOWN先核对再resolve-request/recover-image。文字API仅按已保存且带真实用户引用的重试策略，在自动模式对内容拒绝和有限UNKNOWN执行预授权重试；没有预授权或超出次数时必须停下核对，禁止盲目重复收费。已有RECEIVED响应且内容阶段未变时run-text恢复提交不重新收费。配置/事实/规则变化用refresh重审；已完成稿修改用fork-revision保留旧成品并重新选择文字来源。
 8. 全部计划完成后，**只向用户返回脚本给出的一条真实成品根目录绝对路径**。部分完成不伪称成功。
 
 ## 内置GEO标准（所有新任务强制执行）
