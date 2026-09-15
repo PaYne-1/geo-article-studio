@@ -289,6 +289,29 @@ def test_single_image_revision_preserves_other_image_and_body(engine,monkeypatch
     assert len(provider.calls)==3
     assert result['state']=='IMAGE_REVIEW'
 
+def test_authorized_image_retry_raises_only_task_cap_and_preserves_other_image(engine,monkeypatch):
+    import copy
+    from geo_article_studio.review import REVIEW_CHECKS
+    tid=image_task(engine,count=2,limit_changes={'max_image_requests_per_task':2})
+    provider=mock_provider(monkeypatch,engine,tid)
+    engine.run_image(tid);state=engine.run_image(tid)
+    preserved=copy.deepcopy(state['articles'][0]['images']['A001_I01'])
+    failed={'verdict':'failed','reviewer':'model','viewed_image_ids':['A001_I01','A001_I02'],
+            'checks':[{'check_id':check,'verdict':'failed' if check=='product_structure' else 'passed',
+                       'severity':'hard' if check=='product_structure' else 'info',
+                       'evidence':'第二张车辆结构不符合要求' if check=='product_structure' else '已实际查看',
+                       'suggestion':'仅重生成第二张' if check=='product_structure' else ''}
+                      for check in REVIEW_CHECKS['IMAGE_REVIEW']]}
+    action=engine.next_action(tid)
+    state=engine.submit(tid,action['action_id'],action['expected_revision'],failed)
+    assert state['state']=='PAUSED'
+    state=engine.authorize_image_retry(tid,'A001_I02',3,user_ref='user:one-extra-image')
+    assert state['state']=='IMAGE_PLANNING' and state['mode']=='automatic'
+    assert state['authorization']['limits']['max_image_requests_per_task']==3
+    assert state['articles'][0]['images']=={'A001_I01':preserved}
+    assert state['authorization']['image_cap_changes'][-1]['image_id']=='A001_I02'
+    assert not Path(state['history'][-1]['failed_image']['path']).exists()
+
 def test_task_parent_symlink_cannot_escape_workspace(engine,tmp_path):
     outside=tmp_path/'outside';outside.mkdir()
     task_parent=engine.root/'tasks'

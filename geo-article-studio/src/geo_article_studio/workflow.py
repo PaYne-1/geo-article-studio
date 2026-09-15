@@ -476,12 +476,14 @@ class Engine:
                 t['resume_state']=t['state'];t['state']='PAUSED';t['error']='外部请求状态不明，需核对收费';return self._save(t)
             plans=a['results']['IMAGE_PLANNING']['images'];pending=[x for x in plans if x['image_id'] not in a['images']]
             if not pending: self._advance(t);return self._save(t)
-            p=pending[0];attempts=[r for r in t['requests'] if r['image_id']==p['image_id']]
+            p=pending[0]
+            counted=[r for r in t['requests'] if not (r.get('status')=='FAILED' and r.get('error_code')=='output_exists')]
+            attempts=[r for r in counted if r['image_id']==p['image_id']]
             request_cap=limits.get('max_image_requests_per_task')
-            if len(attempts)>=limits.get('max_generation_attempts_per_image',3) or (request_cap is not None and len(t['requests'])>=request_cap):
+            if len(attempts)>=limits.get('max_generation_attempts_per_image',3) or (request_cap is not None and len(counted)>=request_cap):
                 t['resume_state']=t['state'];t['state']='PAUSED';t['error']='已达到含首次的尝试/调用上限';return self._save(t)
             config=self.settings['image_provider'];pricing=self.settings.get('image_pricing',{});price=pricing.get('price_per_request');max_cost=limits.get('max_cost')
-            if max_cost is not None and (not pricing.get('verified_source') or not isinstance(price,(int,float)) or price<0 or pricing.get('currency')!=limits.get('currency') or (len(t['requests'])+1)*price>max_cost):
+            if max_cost is not None and (not pricing.get('verified_source') or not isinstance(price,(int,float)) or price<0 or pricing.get('currency')!=limits.get('currency') or (len(counted)+1)*price>max_cost):
                 t['resume_state']=t['state'];t['state']='PAUSED';t['error']='金额硬上限缺少可靠计价或将超限';return self._save(t)
             provider=ImageProvider(config)
             if not provider.check().get('ok'):
@@ -629,4 +631,37 @@ class Engine:
             t['text_source']=text_source
             t.setdefault('authorization',{}).setdefault('text_source_changes',[]).append(
                 {'from':old,'to':text_source,'user_ref':user_ref,'at':now()})
+            return self._save(t)
+
+    def authorize_image_retry(self,tid,image_id,new_cap,*,user_ref,actor='user'):
+        """Authorize one extra paid call after an actually failed visual review."""
+        require_user(actor,user_ref)
+        if type(new_cap) is not int or new_cap<1:raise ValueError('新图片调用上限必须为正整数')
+        with self._lock(tid):
+            t=self._load(tid);a=self._article(t)
+            if t['state']!='PAUSED' or t['stage']!='IMAGE_REVIEW' or not a:
+                raise ValueError('只能为视觉审核失败后暂停的当前文章授权重试')
+            if image_id not in a.get('images',{}):raise ValueError('重试图片ID不属于当前文章')
+            if any(r['status'] in ('UNKNOWN','IN_FLIGHT') for r in t.get('requests',[])):
+                raise ValueError('仍有收费状态未知的图片请求，禁止授权重发')
+            failed=any(row.get('stage')=='IMAGE_REVIEW' and row.get('object_id')==a['article_id']
+                       and row.get('result',{}).get('verdict')=='failed' for row in t.get('history',[]))
+            if not failed:raise ValueError('没有可核验的失败视觉审核记录')
+            limits=t.setdefault('authorization',{}).setdefault('limits',{})
+            old_cap=limits.get('max_image_requests_per_task')
+            if type(old_cap) is not int or new_cap!=old_cap+1 or new_cap<len(t.get('requests',[]))+1:
+                raise ValueError('本操作只允许把当前任务图片上限增加一次调用')
+            old_image=copy.deepcopy(a['images'][image_id])
+            old_path=Path(old_image['path']).resolve()
+            if not old_path.is_relative_to(self._path(tid).resolve()):raise ValueError('失败图片路径越界')
+            old_path.unlink(missing_ok=True)
+            a['images'].pop(image_id)
+            a['previous_image_plan']=copy.deepcopy(a['results'].get('IMAGE_PLANNING'))
+            for stage in ('IMAGE_REVIEW','FINAL_REVIEW'):a['results'].pop(stage,None)
+            limits['max_image_requests_per_task']=new_cap
+            change={'from':old_cap,'to':new_cap,'image_id':image_id,'user_ref':user_ref,'at':now()}
+            t['authorization'].setdefault('image_cap_changes',[]).append(change)
+            t['history'].append({'reason':'authorized_image_retry','object_id':a['article_id'],
+                                 'failed_image':old_image,'authorization':copy.deepcopy(change)})
+            t['stage']=t['state']='IMAGE_PLANNING';t.pop('resume_state',None);t['error']=None
             return self._save(t)
