@@ -24,8 +24,10 @@ def test_start_uses_correct_product_and_asks_mode():
 def test_configuration_includes_api_and_libraries_in_one_form():
     form=form_for('配置任务',copy.deepcopy(DEFAULT_SETTINGS))
     assert form['action']=='configure_task'
-    for key in ('chat','product_info','reference_images','product_images','output_root','rule_import_sources','provider','base_url','protocol_document','model','dimensions','max_requests'):
+    for key in ('chat','product_info','reference_images','product_images','output_root','rule_import_sources'):
         assert key in form['missing']
+    for key in ('provider','base_url','protocol_document','model','dimensions','max_requests'):
+        assert key in form['conditional_missing']['with_images']
     assert form['values']['api_key_env']=='GEO_IMAGE_API_KEY'
     assert 'api_key' not in form['values']
     assert any(s['id']=='image_api' for s in form['sections'])

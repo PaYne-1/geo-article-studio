@@ -9,7 +9,7 @@
   "products": [],
   "source_mappings": {},
   "defaults": {
-    "language": "zh-CN", "mode": null, "article_length": null,
+    "language": "zh-CN", "mode": null,
     "image_ratio": null, "image_dimensions": null, "image_format": "png",
     "image_text_policy": null, "image_count_includes_cover": true
   },

@@ -24,7 +24,7 @@ def parser():
         if file:c.add_argument('--file',type=Path,required=True)
         if user:c.add_argument('--user-ref',required=True)
         return c
-    c=command('form');c.add_argument('trigger');c.add_argument('--file',type=Path)
+    c=command('form');c.add_argument('trigger');c.add_argument('--file',type=Path);c.add_argument('--format',choices=['json','text'],default='json')
     c=command('host-check');c.add_argument('--file',type=Path);c.add_argument('--stage',choices=HOST_STAGES,default='PREFLIGHT');c.add_argument('--mode',choices=['automatic','learning'],default='automatic');c.add_argument('--with-images',action='store_true')
     command('configure',file=True);command('doctor');command('index')
     c=command('search');c.add_argument('query');c.add_argument('--library',choices=list(DEFAULT_SETTINGS['libraries']));c.add_argument('--product-id');c.add_argument('--limit',type=int,default=10)
@@ -71,8 +71,13 @@ def run(args):
         from .demo import run_demo
         return run_demo(args.root,args.mode),0
     if args.command=='form':
-        settings=load_settings(args.config) if args.config.is_file() else copy.deepcopy(DEFAULT_SETTINGS)
-        return form_for(args.trigger,settings,read_json(args.file) if args.file else None),0
+        exists=args.config.is_file()
+        settings=load_settings(args.config) if exists else {}
+        result=form_for(args.trigger,settings,read_json(args.file) if args.file else None,config_path=str(args.config.resolve()),persisted=exists)
+        if args.format=='text':
+            if result['action']!='configure_task':raise ValueError('text格式用于配置任务；开始任务请读取JSON选项')
+            return result['message'],0
+        return result,0
     if args.command=='configure':
         incoming=read_json(args.file)
         if args.config.is_file():
@@ -85,7 +90,8 @@ def run(args):
             if root and args.config.resolve().is_relative_to(Path(root).resolve()):raise ValueError('普通配置不能写入源资料库')
         atomic_json(args.config,config)
         load_settings(args.config)
-        return {'saved':str(args.config.resolve()),'missing_libraries':[k for k,v in config['libraries'].items() if v is None]},0
+        return {'saved':str(args.config.resolve()),'missing_libraries':[k for k,v in config['libraries'].items() if v is None],
+                'configuration':form_for('配置任务',config,config_path=str(args.config.resolve()),persisted=True)},0
     if not args.config.is_file():raise ValueError('尚未配置；先运行form 配置任务，再configure --file本地配置文件')
     settings=load_settings(args.config)
     if args.command=='doctor':
