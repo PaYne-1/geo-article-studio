@@ -1,6 +1,6 @@
 {
   "formal": true,
-  "version": "geo-editorial.user-confirmed.v1",
+  "version": "geo-editorial.user-confirmed.v2",
   "rules": [
     {
       "rule_id": "GEO-TITLE-001",
@@ -62,8 +62,8 @@
       "scope": "global",
       "target_id": null,
       "type": "image_preference",
-      "content": "图片须独立成图并对应正文，优先横版、现代、真实、自然、生活化、简洁；图中文字精简。产品外观、Logo和参数须与批准资料一致。",
-      "check_method": "实际逐图查看构图、图文一致性、文字、产品外观、Logo、参数及独立文件",
+      "content": "所有配图宽:高固定3:4竖版并对应正文；每张必须使用当前产品当前版本已批准且允许外传的产品图，并在成图中清楚展示产品。产品外观、结构、Logo和参数须与批准资料一致。",
+      "check_method": "生成前核对3:4尺寸、show_product、产品图ID、版本、哈希和外传授权；生成后逐图查看产品是否清楚出现及外观、结构、Logo、参数和正文一致性",
       "severity": "hard"
     },
     {

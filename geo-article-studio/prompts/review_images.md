@@ -1,3 +1,3 @@
 必须实际查看所有当前生成图以及选用的产品基准图和参考图，不能仅凭提示词/文件名/哈希推断。逐项核对visible_text/product_structure/people_actions/visual_rules/body_alignment。对关键部件不确定标needs_review，不能保证结构百分百准确。检查真实文字拼写、旧Logo型号是否误继承、动作是否暗示不支持功能、正文是否吻合、实际图是否拒绝/占位。viewed_image_ids列实际查看的全部本篇生成图ID；evidence应包含图ID和观察到的区域/差异。无视觉能力由执行层暂停，不得自己宣称具备。学习模式人工看图时reviewer=human且必须引用真实用户检查输入。
 
-存在editorial_standards时，在visual_rules逐张核对：必须真正独立成图，无拼图、套图、长条切图；检查现代、真实、自然、生活化、简洁及已确认横版等规格；文字精简且不堆长段。body_alignment检查所处正文用途，4图依次为封面、内容总结、真实使用场景、产品或总结。product_structure核对电动轮椅外观、Logo、型号及可见参数；不能只相信计划中layout=single或角色声明，必须实际看当前图片。
+存在editorial_standards时，在visual_rules逐张核对：必须真正独立成图，无拼图、套图、长条切图；检查宽:高3:4竖版、现代、真实、自然、生活化和简洁；文字精简且不堆长段。body_alignment检查所处正文用途，4图依次为封面、内容总结、真实使用场景、产品或总结。product_structure必须逐张确认当前产品清楚出现，并与提交的产品基准图核对电动轮椅外观、结构、Logo、型号及可见参数；产品缺失、过度遮挡、变形、错款或Logo错误均失败。不能只相信计划中show_product、layout或角色声明，必须实际看当前图片。

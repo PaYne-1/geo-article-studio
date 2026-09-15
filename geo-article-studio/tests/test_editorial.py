@@ -59,12 +59,18 @@ def test_long_article_minimum_and_duplicate_paragraphs():
     with pytest.raises(ValueError):validate_draft(draft(),plan(),b)
 
 def test_four_images_require_independent_ordered_roles():
-    from geo_article_studio.editorial import validate_images
+    from geo_article_studio.editorial import validate_images,validate_image_spec,REQUIRED_IMAGE_RATIO
     roles=['cover','content_summary','real_scene','product_summary']
-    value={'images':[{'role':role,'layout':'single'} for role in roles]}
+    assert REQUIRED_IMAGE_RATIO=='3:4'
+    validate_image_spec('3:4',[24,32])
+    with pytest.raises(ValueError,match='3:4'):
+        validate_image_spec('4:3',[32,24])
+    value={'images':[{'role':role,'layout':'single','show_product':True,'product_image_ids':['PI1']} for role in roles]}
     validate_images(value,4)
     value['images'][1]['layout']='collage'
     with pytest.raises(ValueError):validate_images(value,4)
+    value['images'][1].update(layout='single',show_product=False,product_image_ids=[])
+    with pytest.raises(ValueError,match='产品'):validate_images(value,4)
 
 @pytest.fixture
 def current_engine(tmp_path):
@@ -77,9 +83,27 @@ def current_engine(tmp_path):
     text='客户讨论出发前如何核对资料。虚构测试产品提供资料核对示例。'
     from pathlib import Path
     Path(index.row['path']).write_text(text,encoding='utf-8');index.row.update(snippet=text,hash=hashlib.sha256(text.encode()).hexdigest())
+    product_images=tmp_path/'product_images';product_images.mkdir()
+    product_path=product_images/'product.png'
+    from PIL import Image
+    Image.new('RGB',(32,32),'blue').save(product_path)
+    product_hash=hashlib.sha256(product_path.read_bytes()).hexdigest()
+    product_source={'source_id':'PI1','library_type':'product_images','product_id':'test-product','hash':product_hash,
+                    'path':str(product_path),'location':{'relative_path':'product.png'},
+                    'snippet':'虚构测试产品基准图','metadata':{'conflict':False,'trust':'untrusted'}}
+    original_search=index.search
+    def search(*args,**kwargs):
+        return [copy.deepcopy(product_source)] if kwargs.get('library_type')=='product_images' else original_search(*args,**kwargs)
+    index.search=search
     class EvidenceProducts(Products):
         def facts(self,pid,approved_only=True):return [{'fact_id':'F1','status':'approved','text':'虚构测试产品提供资料核对示例。','source_ids':['S1']}]
-    settings={'workspace_root':str(tmp_path/'work'),'output_root':str(tmp_path/'out'),'defaults':{'article_length':{'min':1,'max':50}},'limits':{'max_text_revision_attempts':3},'host':{'visual_capability':False}}
+    settings={'workspace_root':str(tmp_path/'work'),'output_root':str(tmp_path/'out'),
+              'libraries':{'product_images':str(product_images)},
+              'defaults':{'article_length':{'min':1,'max':50}},'limits':{'max_text_revision_attempts':3},
+              'host':{'visual_capability':False},
+              'image_authorizations':{'PI1':{'user_ref':'test:user:product-image','hash':product_hash,
+                                             'external_use_approved':True,'product_id':'test-product',
+                                             'version':'test','immutable':['product_structure']}}}
     rules=tmp_path/'rules.json';rules.write_text(json.dumps({'formal':True,'version':'test','rules':[{'rule_id':'R1','scope':'global','target_id':None,'type':'hard_ban','content':'不虚构','terms':['测试禁用词'],'check_method':'语义','severity':'hard'}]}),encoding='utf-8')
     RuleStore(tmp_path/'work').import_file(rules,user_ref='test:user:rules')
     return Engine(settings,index=index,products=EvidenceProducts())
@@ -282,16 +306,17 @@ def test_new_four_image_flow_downloads_and_exports_independent_files(current_eng
     from pathlib import Path
     from PIL import Image
     e=current_engine
+    server['image_size']=(24,32)
     monkeypatch.setenv('GEO_TEST_KEY','offline-fixture')
     e.settings.update(image_provider=config(server),reference_fallback={'user_ref':'test:user:no-reference'},host={'visual_capability':True,'visual_verification_ref':'SIMULATED_ONLY'})
-    e.settings['defaults'].update(image_dimensions=[32,24],image_ratio='4:3',image_format='png',image_text_policy='none')
+    e.settings['defaults'].update(image_dimensions=[24,32],image_ratio='3:4',image_format='png',image_text_policy='none')
     e.settings['limits'].update(max_image_requests_per_task=4,max_generation_attempts_per_image=1)
     tid=prepare(e);e.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[4]}],user_ref='test:user:four-images')
     submit(e,tid,plan());submit(e,tid,draft())
     for stage in ('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW'):submit(e,tid,good_review(stage))
     aid=e.status(tid)['articles'][0]['article_id']
     roles=['cover','content_summary','real_scene','product_summary']
-    images=[{'image_id':f'{aid}_I{i:02d}','article_id':aid,'paragraph':i,'purpose':'虚构流程测试','scene':'中性示意场景','people_actions':'','show_product':False,'product_image_ids':[],'reference_image_ids':[],'borrow':[],'immutable':[],'allowed_text':'','prompt':'独立测试图，无产品无文字','fact_ids':[],'role':role,'layout':'single'} for i,role in enumerate(roles,1)]
+    images=[{'image_id':f'{aid}_I{i:02d}','article_id':aid,'paragraph':i,'purpose':'虚构流程测试','scene':'产品自然出现的中性示意场景','people_actions':'','show_product':True,'product_image_ids':['PI1'],'reference_image_ids':[],'borrow':[],'immutable':['product_structure'],'allowed_text':'','prompt':'3:4竖版独立测试图，展示产品，无文字','fact_ids':[],'role':role,'layout':'single'} for i,role in enumerate(roles,1)]
     invalid=copy.deepcopy(images);invalid[1]['role']='cover'
     with pytest.raises(ValueError):submit(e,tid,{'images':invalid})
     submit(e,tid,{'images':images})
@@ -304,4 +329,18 @@ def test_new_four_image_flow_downloads_and_exports_independent_files(current_eng
     assert len(server['requests'])==4 and len(files)==4
     assert len({p.parent for p in files})==1
     for path in files:
-        with Image.open(path) as picture:assert picture.size==(32,24)
+        with Image.open(path) as picture:assert picture.size==(24,32)
+
+def test_illustrated_task_blocks_before_planning_without_authorized_product_image(current_engine):
+    e=current_engine
+    approved=copy.deepcopy(e.settings['image_authorizations'])
+    e.settings['defaults'].update(image_dimensions=[24,32],image_ratio='3:4',image_format='png',image_text_policy='none')
+    e.settings['image_provider']={'supports_references':True,'max_reference_images':1}
+    e.settings['image_authorizations']={}
+    tid=prepare(e,mode='learning')
+    with pytest.raises(ValueError,match='产品图'):
+        e.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[1]}],user_ref='test:user:image-task')
+    e.settings['image_authorizations']=approved
+    e.settings['image_provider']={'supports_references':False,'max_reference_images':0}
+    with pytest.raises(ValueError,match='参考图'):
+        e.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[1]}],user_ref='test:user:image-task')

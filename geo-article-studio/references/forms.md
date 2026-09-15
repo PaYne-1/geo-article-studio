@@ -13,9 +13,9 @@
 
 missing只列基础缺项；conditional_missing.with_images / text_api分别列条件必需字段。它们只说明“尚未填”，不能证明已填值有效。checks是已保存配置的非联网检查（预填尚未保存时不代表预填值已验），包含凭据接入状态且不显示值。configure成功后返回configuration，展示保存位置、本地检查结果及剩余条件缺项。默认值也需保存才能跨运行复用。
 
-agent_fields是Agent根据模型名称处理的协议参数，不放进用户清单。查找该模型官方资料，核对服务地址、适配器、接口路径、参考图能力/上限、格式和横版尺寸；不能根据相似名称或Key格式猜供应商。无法唯一识别或协议未实现时明确报告。调用上限可留空；填写时才作为用户指定的额外硬上限。
+agent_fields是Agent根据模型名称处理的协议参数，不放进用户清单。查找该模型官方资料，核对服务地址、适配器、接口路径、参考图能力/上限、格式和准确3:4竖版尺寸；不能根据相似名称或Key格式猜供应商。无法唯一识别、协议未实现或没有准确3:4尺寸时明确报告并阻断。调用上限可留空；填写时才作为用户指定的额外硬上限。
 
-推荐横版但不硬填通用像素尺寸；Agent读接口文档后按文章内容从真实支持范围自动选择。图中文字和是否展示产品由每篇问题型标题、正文、平台及已批准产品资料决定；不能强制带字、强制露出产品或编造产品特征。
+图片宽:高固定3:4竖版，不硬填跨服务通用像素尺寸；Agent读接口文档后只能从真实支持的准确3:4范围选择。图中文字由每篇问题型标题、正文和平台决定；每张图必须使用当前版本已批准产品图并清楚展示产品，不能编造产品特征。
 
 API Key可从聊天接收后由Agent通过configure-api --key-stdin接入，或使用本地隐藏输入，不能作为form JSON、configure JSON或命令行参数。Windows自动写入用户环境变量GEO_IMAGE_API_KEY/GEO_TEXT_API_KEY并接入当前进程；其他宿主使用其安全凭据能力。只报告变量名和布尔接入状态，不输出值。表单和保存不发API请求；真实接口验证另需技术配置齐备及费用授权。
 
@@ -26,7 +26,7 @@ API Key可从聊天接收后由Agent通过configure-api --key-stdin接入，或�
 | product | default_product_name；实际products登记须有版本与来源，另行核对 |
 | chat/product_info/reference_images/product_images | libraries下对应键 |
 | output_root | 同名顶层键 |
-| image_ratio、image_format、image_text_policy | Agent据模型文档和文章配图策略写入defaults，不由用户表单填写 |
+| image_ratio、image_format、image_text_policy | image_ratio固定3:4；格式和文字策略由Agent据模型文档与文章配图策略写入defaults，不由用户表单填写 |
 | dimensions | defaults.image_dimensions |
 | provider | image_provider.adapter（依据已核实协议选择受支持适配器） |
 | base_url、model、api_key_env、supports_references、max_reference_images、output_formats | image_provider下同名键 |

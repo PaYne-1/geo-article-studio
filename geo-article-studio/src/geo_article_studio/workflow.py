@@ -224,7 +224,7 @@ class Engine:
                     article['geo_brief']=editorial.validate_brief(candidate)
                     article['geo_brief_user_ref']=user_ref
             if any(next(x for x in t['topics'] if x['topic_id']==a['topic_id'])['status']!='ready' for a in articles): raise ValueError('所选主题依据不足')
-            missing=[];d=self.settings.get('defaults',{});num=sum(a['image_count'] for a in articles)
+            missing=[];d=self.settings.get('defaults',{});num=sum(a['image_count'] for a in articles);product_image_rows=[]
             if not t.get('editorial_version'):
                 if not isinstance(d.get('article_length'),dict) or any(type(d['article_length'].get(k)) is not int or d['article_length'][k]<1 for k in ('min','max')): missing.append('defaults.article_length {min,max}')
                 elif d['article_length']['max']<d['article_length']['min']: missing.append('article_length范围')
@@ -232,26 +232,40 @@ class Engine:
             if num:
                 if not api_resolution_ready(self.settings,'image'):missing.append('图片模型接口协议尚未由Agent核对完成')
                 dims=d.get('image_dimensions');ratio=d.get('image_ratio')
-                if not isinstance(dims,list) or len(dims)!=2 or any(type(n) is not int or n<1 for n in dims): missing.append('image_dimensions必须是两个正整数')
-                if isinstance(ratio,str) and re.fullmatch(r'\d+:\d+',ratio) and isinstance(dims,list) and len(dims)==2:
-                    rw,rh=map(int,ratio.split(':'))
-                    if rw<1 or rh<1 or dims[0]*rh!=dims[1]*rw: missing.append('比例和像素尺寸不一致')
-                else: missing.append('image_ratio须为宽:高')
+                if t.get('editorial_version'):
+                    try:editorial.validate_image_spec(ratio,dims)
+                    except ValueError as error:missing.append(str(error))
+                else:
+                    if not isinstance(dims,list) or len(dims)!=2 or any(type(n) is not int or n<1 for n in dims): missing.append('image_dimensions必须是两个正整数')
+                    if isinstance(ratio,str) and re.fullmatch(r'\d+:\d+',ratio) and isinstance(dims,list) and len(dims)==2:
+                        rw,rh=map(int,ratio.split(':'))
+                        if rw<1 or rh<1 or dims[0]*rh!=dims[1]*rw: missing.append('比例和像素尺寸不一致')
+                    else: missing.append('image_ratio须为宽:高')
                 if d.get('image_format') not in ('png','jpeg','jpg','webp'): missing.append('image_format不支持')
                 if d.get('image_text_policy') not in ('none','specified','auto'): missing.append('image_text_policy须为none、specified或auto')
                 for k in ('image_ratio','image_dimensions','image_format','image_text_policy'):
                     if d.get(k) is None: missing.append('defaults.'+k)
                 cap=self.settings.get('limits',{}).get('max_image_requests_per_task')
                 if cap is not None and (type(cap) is not int or cap<num): missing.append('limits.max_image_requests_per_task（已填写时必须覆盖本轮图片数）')
-                if not self.settings.get('image_provider'): missing.append('image_provider')
+                provider=self.settings.get('image_provider') or {}
+                if not provider: missing.append('image_provider')
+                elif t.get('editorial_version')==editorial.VERSION and (not provider.get('supports_references') or type(provider.get('max_reference_images')) is not int or provider.get('max_reference_images')<1):
+                    missing.append('图片模型必须支持至少1张产品参考图')
+                product_image_rows=self.index.search('',library_type='product_images',product_id=t['product']['product_id'],limit=100,is_image=True)
+                if t.get('editorial_version')==editorial.VERSION:
+                    authorizations=self.settings.get('image_authorizations',{})
+                    if not any((auth:=authorizations.get(row['source_id'],{})).get('external_use_approved')
+                               and auth.get('user_ref') and auth.get('hash')==row['hash']
+                               and auth.get('product_id')==t['product']['product_id']
+                               and auth.get('version')==t['product']['version'] for row in product_image_rows):
+                        missing.append('当前产品当前版本缺少已批准外传的产品图')
                 if t['mode']=='automatic' and (not visual_available(self.settings) or not self.settings.get('host',{}).get('visual_verification_ref')): missing.append('host.visual_capability及真实视觉能力证明')
             if missing: raise ValueError('仅需补齐：'+', '.join(missing))
             t['rules_snapshot']=self.rules.snapshot(t['product']['product_id']);self._check_snapshot(t)
             if num:
-                for lib in ('reference_images','product_images'):
-                    for row in self.index.search('',library_type=lib,product_id=t['product']['product_id'],limit=30,is_image=True): t['sources'][row['source_id']]=row
-                    if lib=='reference_images':
-                        for row in self.index.search('',library_type=lib,product_id='general',limit=20,is_image=True): t['sources'][row['source_id']]=row
+                for row in product_image_rows:t['sources'][row['source_id']]=row
+                for row in self.index.search('',library_type='reference_images',product_id=t['product']['product_id'],limit=30,is_image=True):t['sources'][row['source_id']]=row
+                for row in self.index.search('',library_type='reference_images',product_id='general',limit=20,is_image=True):t['sources'][row['source_id']]=row
             t['articles']=articles;t['selection']=selection;t['authorization'].update(selection_user_ref=user_ref,total_images=num,total_articles=len(articles),limits=copy.deepcopy(self.settings.get('limits',{})))
             t['stage']=t['state']='PLANNING';return self._save(t)
 
@@ -433,7 +447,7 @@ class Engine:
 
     def _validate_image_plan(self,t,a,result):
         images=result['images'];d=self.settings['defaults']
-        if t.get('editorial_version'):editorial.validate_images(result,a['image_count'])
+        if t.get('editorial_version'):editorial.validate_images(result,a['image_count'],require_product=t.get('editorial_version')==editorial.VERSION)
         if len(images)!=a['image_count'] or len({x['image_id'] for x in images})!=len(images): raise ValueError('图片计划数量或ID不正确')
         paragraphs=a['results']['WRITING']['body'].split('\n\n')
         for i,p in enumerate(images,1):

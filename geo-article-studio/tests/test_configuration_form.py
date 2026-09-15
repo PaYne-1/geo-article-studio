@@ -44,12 +44,14 @@ def test_form_marks_saved_defaults_and_unsaved_provided_values_separately():
     assert settings['image_provider']['model']=='saved-model'
 
 
-def test_landscape_is_a_preference_without_changing_existing_specs():
+def test_3x4_portrait_is_the_default_and_stale_specs_remain_visible_for_migration():
     form=form_for('配置任务',{'defaults':{'image_dimensions':[1024,1024],'image_ratio':'1:1'}})
     assert form['values']['dimensions']==[1024,1024]
     assert form['values']['image_ratio']=='1:1'
-    assert form['recommendations']['orientation']=='landscape'
-    assert '1024×1024' not in form_for('配置任务',{})['message']
+    assert form['recommendations']['orientation']=='portrait'
+    fresh=form_for('配置任务',{})
+    assert fresh['values']['image_ratio']=='3:4'
+    assert '宽:高固定3:4竖版' in fresh['message']
     assert form_for('配置任务',{})['values']['dimensions'] is None
 
 

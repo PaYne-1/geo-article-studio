@@ -20,15 +20,15 @@ def api():
     return ImageProvider, ProviderError, validate_image
 
 
-def png():
+def png(size=(32,24)):
     out = io.BytesIO()
-    Image.new('RGB', (32, 24), 'green').save(out, 'PNG')
+    Image.new('RGB', size, 'green').save(out, 'PNG')
     return out.getvalue()
 
 
 @pytest.fixture
 def server():
-    state = {'requests': [], 'mode': 'base64'}
+    state = {'requests': [], 'mode': 'base64', 'image_size': (32,24)}
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             return
@@ -39,7 +39,7 @@ def server():
                 self.send_response(401); self.end_headers(); self.wfile.write(b'secret-key'); return
             if state['mode'] == 'timeout':
                 time.sleep(.3)
-            payload = {'data': [{'b64_json': base64.b64encode(png()).decode()}]}
+            payload = {'data': [{'b64_json': base64.b64encode(png(state['image_size'])).decode()}]}
             if state['mode'] == 'url':
                 payload = {'data': [{'url': state['url'] + '/redirect'}]}
             if state['mode'] == 'corrupt':
@@ -52,7 +52,7 @@ def server():
             state['requests'].append((self.path, dict(self.headers), b''))
             if self.path == '/redirect':
                 self.send_response(302); self.send_header('Location', state.get('redirect', state['url'] + '/image')); self.end_headers(); return
-            raw = png()
+            raw = png(state['image_size'])
             self.send_response(200); self.send_header('Content-Length', str(len(raw))); self.end_headers(); self.wfile.write(raw)
     httpd = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     state['url'] = 'http://127.0.0.1:' + str(httpd.server_port)

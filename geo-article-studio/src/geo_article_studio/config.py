@@ -14,7 +14,7 @@ DEFAULT_SETTINGS = {
     'workspace_root': None, 'user_path_mapping': None, 'rule_import_sources': [],
     'products': [], 'source_mappings': {},
     'defaults': {'language': 'zh-CN', 'mode': None, 'article_length': None,
-                 'image_ratio': None, 'image_dimensions': None, 'image_format': 'png',
+                 'image_ratio': '3:4', 'image_dimensions': None, 'image_format': 'png',
                  'image_text_policy': 'auto', 'image_count_includes_cover': True},
     'limits': {'max_generation_attempts_per_image': 3, 'max_text_revision_attempts': 3,
                'max_parallel_image_requests': 1, 'max_image_requests_per_task': None,

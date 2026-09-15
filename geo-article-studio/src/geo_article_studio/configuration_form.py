@@ -19,7 +19,7 @@ FIELDS={
     'output_formats':('image_provider.output_formats',None,'接口支持的格式'),
     'api_key_env':('image_provider.api_key_env','GEO_IMAGE_API_KEY','图片凭据变量名'),
     'dimensions':('defaults.image_dimensions',None,'已确认图片尺寸'),
-    'image_ratio':('defaults.image_ratio',None,'已确认图片比例'),
+    'image_ratio':('defaults.image_ratio',DEFAULT_SETTINGS['defaults']['image_ratio'],'已确认图片比例'),
     'image_format':('defaults.image_format','png','图片格式'),
     'image_text_policy':('defaults.image_text_policy','auto','图中文字自动策略'),
     'max_attempts':('limits.max_generation_attempts_per_image',3,'单图尝试上限（含首次）'),
@@ -90,7 +90,7 @@ def configuration_form(settings,provided=None,*,config_path=None,persisted=None)
                                    'text_api':[k for k in TEXT if empty(values[k])]+([] if text_key else ['text_api_key'])},
             'sections':sections,'agent_fields':AGENT.copy(),'choices':{},
             'persistence':{'saved_config_loaded':loaded,'config_path':config_path,'can_save_partial':True,'merge_updates':True},
-            'recommendations':{'orientation':'landscape','dimensions':'Agent依据实际接口支持自动选择适合文章的横版规格；不猜尺寸，不覆盖已核实规格'},
+            'recommendations':{'orientation':'portrait','ratio':'3:4','dimensions':'宽:高固定3:4竖版；Agent只能从接口实际支持的3:4尺寸中选择，不能改成近似比例'},
             'checks':local_checks(settings),
             'credential_notice':'可直接在聊天中提供API Key，并注明图片或文字用途及模型名称；Agent接收后在本地持久配置，不回显Key、不写入普通JSON。也可选择本地隐藏输入。聊天中发送的Key可能保留在会话记录中。',
             'technical_notice':'Agent根据模型名称查找官方文档并自动补齐地址、适配器、接口路径、参考图能力、格式和尺寸；无法唯一识别或协议不受支持时明确报告，不能猜测或发收费探测请求。',
@@ -126,10 +126,10 @@ def render_configuration(form):
     specs=[]
     for key in ('dimensions','image_ratio','image_format','max_attempts'):
         if not empty(values[key]):specs.append(FIELDS[key][2]+'：'+str(values[key])+'（'+status[states[key]]+'）')
-    lines+=['','图片优先横版；Agent按接口真实支持范围和文章内容自动选择规格。']
+    lines+=['','所有配图宽:高固定3:4竖版；每张必须使用当前版本已批准产品图，并在成图中清楚展示产品。']
     if specs:lines.append('；'.join(specs)+'。')
     lines+=['',form['credential_notice'],form['technical_notice'],
-            '图片中的少量文字及是否展示产品，由Agent根据文章标题、正文与已批准产品资料决定；用户无需预先配置。',
+            '图片中的少量文字由Agent根据文章标题和正文决定；所有图片必须使用已批准产品图并展示当前产品。',
             '图片和文字任务调用上限均可留空；确定任务规模后再估算和确认。零图任务不要求图片API齐备；用当前Agent默认模型无需第三方文字API。篇幅在“开始任务”中选择短篇600–800字或普通长文至少1000字。',
             '本表只做本地检查，不发送API请求，不产生调用费用。']
     if p['saved_config_loaded']:
