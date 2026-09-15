@@ -125,6 +125,56 @@ def test_selected_chat_title_must_be_question_and_cannot_be_replaced(current_eng
     row={'topic_id':'T1','article_count':1,'image_counts':[0],'brief':supplied}
     with pytest.raises(ValueError,match='候选标题'):e.select(tid,[row],user_ref='test:user:select')
 
+def test_explicit_user_confirmed_title_survives_topic_refresh(current_engine):
+    e=current_engine;tid=prepare(e,configured_brief=False)
+    chosen='电动轮椅一次充电实际能跑多远，电池容量和续航怎么选？'
+    supplied=brief();supplied['original_title']=chosen
+    row={'topic_id':'T1','article_count':1,'image_counts':[0],
+         'brief':supplied,'user_confirmed_title':chosen}
+    e.select(tid,[row],user_ref='chat:user:selected-T01')
+    action=e.next_action(tid)
+    assert action['context']['geo_brief']['original_title']==chosen
+    task=e.status(tid)
+    assert task['articles'][0]['geo_brief_title_source']=='explicit_user_selection'
+    assert task['articles'][0]['geo_brief_user_ref']=='chat:user:selected-T01'
+
+def test_article_actions_only_send_selected_topic_and_fact_sources():
+    from geo_article_studio.workflow import action_source_ids
+    task={
+        'sources':{
+            'S_SELECTED':{'source_id':'S_SELECTED','library_type':'chat'},
+            'S_OTHER':{'source_id':'S_OTHER','library_type':'chat'},
+            'S_FACT':{'source_id':'S_FACT','library_type':'product_info'},
+            'S_IMAGE':{'source_id':'S_IMAGE','library_type':'reference_images'},
+        },
+        'topics':[{'topic_id':'T1','source_ids':['S_SELECTED']},{'topic_id':'T2','source_ids':['S_OTHER']}],
+        'facts':[{'fact_id':'F1','source_ids':['S_FACT']}],
+    }
+    article={'topic_id':'T1'}
+    assert action_source_ids(task,article,'PLANNING')=={'S_SELECTED','S_FACT'}
+    assert action_source_ids(task,article,'IMAGE_PLANNING')=={'S_SELECTED','S_FACT','S_IMAGE'}
+    assert action_source_ids(task,None,'ANALYZING')==set(task['sources'])
+
+def test_generation_prompts_apply_rules_before_output():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]/'prompts'
+    writing=(root/'write_article.md').read_text(encoding='utf-8')
+    images=(root/'plan_images.md').read_text(encoding='utf-8')
+    assert '提交前' in writing and '650-750' in writing
+    assert '生成请求发出前' in images and '逐张' in images
+
+def test_reported_customer_aggregate_count_is_checked(current_engine):
+    from test_engine import submit
+    e=current_engine
+    e.index.row['metadata'].update(evidence_type='customer_aggregate',reported_count=7)
+    tid=e.start('test-product','automatic',text_source='host',user_ref='test:user:start')['task_id']
+    submit(e,tid,{'understanding':'虚构汇总证据测试','source_ids':['S1'],'gaps':[]})
+    topic={'topic_id':'T1','direction':'资料核对','question_summary':brief()['original_title'],'source_ids':['S1'],'scope':'product_specific','count_basis':'reported_aggregate','verified_count':6,'supporting_fact_ids':['F1'],'distinct_angles':['核对准备'],'gaps':[],'status':'ready','priority_reason':'日报汇总'}
+    with pytest.raises(ValueError,match='汇总次数'):submit(e,tid,{'topics':[topic],'coverage_note':'汇总测试'})
+    topic['verified_count']=7
+    submit(e,tid,{'topics':[topic],'coverage_note':'汇总测试'})
+    assert e.status(tid)['state']=='WAITING_SELECTION'
+
 def test_new_automatic_flow_requires_three_ordered_reviews_and_exports(current_engine):
     from test_engine import submit,good_review
     from pathlib import Path
@@ -148,7 +198,7 @@ def test_review_failure_cannot_skip_geo_round(current_engine):
     submit(e,tid,plan());submit(e,tid,draft());submit(e,tid,good_review('FACT_REVIEW'))
     with pytest.raises(ValueError):submit(e,tid,good_review('CONTENT_REVIEW'))
     review=good_review('GEO_REVIEW');review['checks'][0]['verdict']='failed';review['verdict']='failed'
-    submit(e,tid,review);assert e.next_action(tid)['stage']=='WRITING'
+    submit(e,tid,review);assert e.next_action(tid)['stage']=='PLANNING'
 
 def test_learning_confirms_core_answer_and_replans_after_feedback(current_engine):
     from test_engine import submit

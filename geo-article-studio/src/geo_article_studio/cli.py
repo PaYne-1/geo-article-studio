@@ -33,6 +33,7 @@ def parser():
     c=command('start',user=True);c.add_argument('--product-id');c.add_argument('--mode',choices=['automatic','learning'],required=True);c.add_argument('--text-source',choices=['host','api'],required=True);c.add_argument('--brief-file',type=Path);c.add_argument('--scope-file',type=Path);c.add_argument('--requirements-file',type=Path)
     for name in ('status','next-action','run-image','run-text','export'):command(name,task=True)
     c=command('resolve-text-request',task=True,user=True);c.add_argument('request_id')
+    c=command('switch-text-source',task=True,user=True);c.add_argument('--text-source',choices=['host','api'],required=True)
     for name in ('select','submit-result'):command(name,task=True,file=True,user=name=='select')
     for name in ('approve','revise'):
         c=command(name,task=True,user=True);c.add_argument('--action-id',required=True);c.add_argument('--revision',type=int,required=True)
@@ -179,6 +180,7 @@ def run(args):
     elif cmd=='retrieve':result=e.retrieve(args.task_id,args.query,args.library,args.limit)
     elif cmd=='resolve-request':result=e.resolve_request(args.task_id,args.request_id,args.resolution,user_ref=args.user_ref)
     elif cmd=='resolve-text-request':result=e.resolve_text_request(args.task_id,args.request_id,user_ref=args.user_ref)
+    elif cmd=='switch-text-source':result=e.switch_text_source(args.task_id,args.text_source,user_ref=args.user_ref)
     elif cmd=='recover-image':result=e.recover_image(args.task_id,args.request_id,args.file,user_ref=args.user_ref)
     elif cmd=='fork-revision':result=e.fork_revision(args.task_id,args.feedback_file.read_text(encoding='utf-8'),user_ref=args.user_ref,text_source=args.text_source)
     else:raise ValueError('未知命令')

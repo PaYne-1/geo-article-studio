@@ -6,12 +6,13 @@ import json
 SCRIPT=Path(__file__).resolve().parents[1]/'scripts'/'geo.py'
 
 def test_cli_form_other_cwd_and_missing_config(tmp_path):
-    r=subprocess.run([sys.executable,str(SCRIPT),'form','开始任务'],cwd=tmp_path,capture_output=True,text=True,encoding='utf-8')
+    base=[sys.executable,str(SCRIPT),'--config',str(tmp_path/'settings.json')]
+    r=subprocess.run(base+['form','开始任务'],cwd=tmp_path,capture_output=True,text=True,encoding='utf-8')
     assert r.returncode==0,r.stderr
     result=json.loads(r.stdout)
     assert result['values']['product']=='218轻便侠'
     assert result['values']['mode'] is None and 'mode' in result['missing']
-    r=subprocess.run([sys.executable,str(SCRIPT),'doctor'],cwd=tmp_path,capture_output=True,text=True,encoding='utf-8')
+    r=subprocess.run(base+['doctor'],cwd=tmp_path,capture_output=True,text=True,encoding='utf-8')
     assert r.returncode==2
     assert 'Traceback' not in r.stderr+r.stdout
 

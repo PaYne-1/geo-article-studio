@@ -1,1 +1,1 @@
-整理当前产品理解和资料预检。只用input_refs和已批准facts，产品参数候选不等于事实。列出未解析范围、缺项和冲突，输出understanding/source_ids/gaps。聊天只能证明有人询问，不能证明功能或满意。若缺少支撑任务的资料，说明缺项，不能臆造。
+整理当前产品理解和资料预检。只用input_refs和已批准facts，产品参数候选不等于事实。列出未解析范围、缺项和冲突，输出understanding/source_ids/gaps。source_ids只能从本次input_refs中的source_id逐字复制，宁可少引也不能补写、缩写、猜测或制造ID。聊天只能证明有人询问，不能证明功能或满意。若缺少支撑任务的资料，说明缺项，不能臆造。

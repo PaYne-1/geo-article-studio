@@ -32,6 +32,54 @@ def external_context(action):
         return value
     return clean({'stage':action['stage'],'context':action['context'],'result_schema':action['result_schema']})
 
+def normalize_result(action,result):
+    """Repair only deterministic arithmetic derived from cited aggregate rows."""
+    normalized=copy.deepcopy(result);changes=[]
+    if action.get('stage')=='WRITING':
+        planned=action.get('context',{}).get('article',{}).get('results',{}).get('PLANNING',{}).get('geo',{}).get('sections',[])[1:]
+        drafted=normalized.get('geo',{}).get('sections',[])
+        if (isinstance(drafted,list) and drafted and drafted[0].get('kind')=='answer'
+                and len(drafted)==len(planned)+1 and [row.get('kind') for row in drafted[1:]]==[row.get('kind') for row in planned]):
+            removed=drafted.pop(0)
+            changes.append({'field':'geo.sections[0]','from':removed,'to':None,'basis':'opening is the answer section; draft sections start after answer'})
+        if (isinstance(planned,list) and isinstance(drafted,list) and len(planned)==len(drafted)
+                and all(isinstance(a,dict) and isinstance(b,dict) and a.get('kind')==b.get('kind') for a,b in zip(planned,drafted))):
+            old_headings=[row.get('heading') for row in drafted]
+            new_headings=[row.get('heading') for row in planned]
+            if old_headings!=new_headings and all(isinstance(value,str) and value for value in new_headings):
+                for row,heading in zip(drafted,new_headings):row['heading']=heading
+                changes.append({'field':'geo.sections[].heading','from':old_headings,'to':new_headings,'basis':'confirmed plan headings'})
+            opening=normalized.get('geo',{}).get('opening')
+            if isinstance(opening,str) and all(isinstance(row.get('text'),str) for row in drafted):
+                rebuilt=opening+'\n\n'+'\n\n'.join(row['heading']+'\n'+row['text'] for row in drafted)
+                if normalized.get('body')!=rebuilt:
+                    old_body=normalized.get('body');normalized['body']=rebuilt
+                    changes.append({'field':'body','from':old_body,'to':rebuilt,'basis':'rebuilt from normalized structured draft'})
+        return normalized,changes
+    if action.get('stage')=='PLANNING' and isinstance(normalized.get('geo',{}).get('sections'),list):
+        headings=[row.get('heading') for row in normalized['geo']['sections'] if isinstance(row,dict)]
+        if headings and all(isinstance(value,str) and value for value in headings) and normalized.get('outline')!=headings:
+            changes.append({'field':'outline','from':normalized.get('outline'),'to':headings,'basis':'geo.sections headings are the canonical structured outline'})
+            normalized['outline']=headings
+        return normalized,changes
+    if action.get('stage')!='ANALYZING' or not isinstance(normalized.get('topics'),list):return normalized,changes
+    sources={row.get('source_id'):row for row in action.get('input_refs',[]) if isinstance(row,dict)}
+    for topic in normalized['topics']:
+        if not isinstance(topic,dict):continue
+        cited=topic.get('source_ids',[])
+        valid=[sid for sid in cited if sid in sources and sources[sid].get('library_type')=='chat' and sources[sid].get('metadata',{}).get('role') in ('customer','客户','user')]
+        if valid and valid!=cited:
+            changes.append({'field':'topics.'+str(topic.get('topic_id','?'))+'.source_ids','from':cited,'to':valid,'basis':'input_refs chat sources with explicit customer role'})
+            topic['source_ids']=valid
+        if topic.get('count_basis')!='reported_aggregate':continue
+        rows=[sources.get(sid) for sid in topic.get('source_ids',[])]
+        if not rows or any(not row or row.get('metadata',{}).get('evidence_type')!='customer_aggregate' or type(row.get('metadata',{}).get('reported_count')) is not int for row in rows):continue
+        expected=sum(row['metadata']['reported_count'] for row in rows)
+        if topic.get('verified_count')!=expected:
+            changes.append({'field':'topics.'+str(topic.get('topic_id','?'))+'.verified_count','from':topic.get('verified_count'),'to':expected,'basis':'sum(input_refs.metadata.reported_count)'})
+            topic['verified_count']=expected
+    return normalized,changes
+
 class TextProvider:
     ALLOWED={'adapter','base_url','endpoint','model','api_key_env','auth_type','allowed_local_hosts','protocol_document','timeout_seconds','max_response_bytes','max_input_bytes','max_tokens','max_requests_per_task'}
     def __init__(self,config):self.config=copy.deepcopy(config or {})
@@ -96,7 +144,37 @@ def run_text(engine,tid):
             if not provider.check()['ok']:raise ValueError('文字API配置或本地凭据不完整')
             requests=t.setdefault('text_requests',[])
             pending=[r for r in requests if r['status'] not in ('APPLIED','RESOLVED')]
+            # invalid_text_input is raised before the HTTP transport is entered,
+            # so it cannot have incurred a provider charge and needs no paid-retry approval.
+            for old in pending:
+                if old.get('status')=='FAILED' and old.get('error_code')=='invalid_text_input':
+                    old.update(status='RESOLVED',previous_status='FAILED',automatic_resolution='pre_network_validation',resolved_at=now())
+            pending=[r for r in requests if r['status'] not in ('APPLIED','RESOLVED')]
+            policy=engine.settings.get('text_retry_policy') or {}
+            if t.get('mode')=='automatic' and policy.get('approval_user_ref'):
+                unknown_limit=policy.get('unknown_status_max_retries',0)
+                unknown_used=sum(r.get('automatic_resolution')=='preauthorized_unknown_retry' for r in requests)
+                for old in pending:
+                    if old.get('status')=='UNKNOWN' and unknown_used<unknown_limit:
+                        old.update(status='RESOLVED',previous_status='UNKNOWN',automatic_resolution='preauthorized_unknown_retry',
+                                   resolution_user_ref=policy['approval_user_ref'],resolved_at=now())
+                        unknown_used+=1
+                content_limit=policy.get('content_max_retries',0)
+                content_used=sum(r.get('automatic_resolution')=='preauthorized_content_retry' and r.get('stage')==action['stage'] for r in requests)
+                for old in pending:
+                    if old.get('status')=='REJECTED' and old.get('stage')==action['stage'] and content_used<content_limit:
+                        old.update(status='RESOLVED',previous_status='REJECTED',automatic_resolution='preauthorized_content_retry',
+                                   resolution_user_ref=policy['approval_user_ref'],resolved_at=now())
+                        content_used+=1
+            pending=[r for r in requests if r['status'] not in ('APPLIED','RESOLVED')]
             receipt=next((r for r in pending if r['status']=='RECEIVED' and r.get('input_hash')==input_hash),None)
+            rejected=next((r for r in pending if r['status']=='REJECTED' and r.get('input_hash')==input_hash),None)
+            if not receipt and rejected and len(pending)==1:
+                repaired,normalizations=normalize_result(action,rejected.get('result') or {})
+                if normalizations:
+                    rejected.setdefault('raw_result',copy.deepcopy(rejected.get('result')))
+                    rejected.update(result=repaired,normalizations=normalizations,status='RECEIVED')
+                    receipt=rejected;atomic_json(engine._path(tid)/'state.json',t)
             if pending and (not receipt or len(pending)!=1):raise ValueError('文字请求需人工核对结果与收费后resolve-text-request，禁止自动重复请求')
             if receipt and (receipt['action_id']!=action['action_id'] or receipt['revision']!=action['expected_revision']):
                 receipt.setdefault('rebound_from',[]).append({'action_id':receipt['action_id'],'revision':receipt['revision']})
@@ -108,23 +186,34 @@ def run_text(engine,tid):
                 receipt={'request_id':uuid.uuid4().hex,'action_id':action['action_id'],'revision':action['expected_revision'],'input_hash':input_hash,'stage':action['stage'],'status':'IN_FLIGHT','created_at':now()}
                 requests.append(receipt);atomic_json(engine._path(tid)/'state.json',t)
         if receipt['status']!='RECEIVED':
-            try:result=provider.generate(action)
+            try:
+                retry_timeout=(engine.settings.get('text_retry_policy') or {}).get('retry_timeout_seconds')
+                if type(retry_timeout) is int and retry_timeout>0:
+                    provider.config['timeout_seconds']=max(provider.config.get('timeout_seconds',120),retry_timeout)
+                raw_result=provider.generate(action)
+                result,normalizations=normalize_result(action,raw_result)
             except (ProviderError,ValueError) as error:
                 with engine._lock(tid):
                     t=engine._load(tid);r=next(r for r in t['text_requests'] if r['request_id']==receipt['request_id'])
-                    r.update(status='UNKNOWN' if isinstance(error,ProviderError) and error.status_unknown else 'FAILED',error_code=error.code if isinstance(error,ProviderError) else 'invalid_text_input')
+                    if isinstance(error,ValueError):
+                        r.update(status='RESOLVED',previous_status='IN_FLIGHT',automatic_resolution='pre_network_validation',resolved_at=now(),error_code='invalid_text_input')
+                    else:
+                        r.update(status='UNKNOWN' if error.status_unknown else 'FAILED',error_code=error.code)
                     atomic_json(engine._path(tid)/'state.json',t)
                 raise
             with engine._lock(tid):
                 t=engine._load(tid);receipt=next(r for r in t['text_requests'] if r['request_id']==receipt['request_id'])
-                receipt.update(status='RECEIVED',result=result);atomic_json(engine._path(tid)/'state.json',t)
+                receipt.update(status='RECEIVED',result=result)
+                if normalizations:receipt.update(raw_result=raw_result,normalizations=normalizations)
+                atomic_json(engine._path(tid)/'state.json',t)
         try:
             return engine.submit(tid,action['action_id'],action['expected_revision'],receipt['result'],producer={'agent':'third-party-api','model':provider.config['model']},_text_request_id=receipt['request_id'])
-        except ValueError:
+        except ValueError as error:
             with engine._lock(tid):
                 t=engine._load(tid);r=next(r for r in t['text_requests'] if r['request_id']==receipt['request_id'])
                 changed=t['action_id']!=action['action_id'] or t['revision']!=action['expected_revision'] or t['state'] in ('PAUSED','PARTIAL')
                 r['status']='RECEIVED' if changed else 'REJECTED'
+                if not changed:r['rejection_error']=str(error)
                 atomic_json(engine._path(tid)/'state.json',t)
             raise
 

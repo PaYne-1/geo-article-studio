@@ -1,0 +1,79 @@
+{
+  "formal": true,
+  "version": "geo-editorial.user-confirmed.v1",
+  "rules": [
+    {
+      "rule_id": "GEO-TITLE-001",
+      "scope": "global",
+      "target_id": null,
+      "type": "product_structure",
+      "content": "从聊天库客户关注点生成问题型钩子标题；人工选择后保持核心搜索意图，正文直接回答该问题。",
+      "check_method": "核对聊天来源、人工选择记录、问题型标题、核心答案和标题语义一致性",
+      "severity": "hard"
+    },
+    {
+      "rule_id": "GEO-OUTLINE-001",
+      "scope": "global",
+      "target_id": null,
+      "type": "product_structure",
+      "content": "文章按核心答案、3至5个核心问题、真实场景或案例、品牌产品案例、2至4个常见问题、总结建议组织；开头100至200字先给结论。",
+      "check_method": "逐段核对结构顺序、开头长度、子问题数量、FAQ数量及总结建议",
+      "severity": "hard"
+    },
+    {
+      "rule_id": "GEO-LENGTH-001",
+      "scope": "global",
+      "target_id": null,
+      "type": "product_structure",
+      "content": "短篇正文600至800字，普通长文至少1000字；禁止以重复表达凑字数。",
+      "check_method": "按正文去空白字符计数并做重复段落语义检查",
+      "severity": "hard"
+    },
+    {
+      "rule_id": "GEO-FACT-001",
+      "scope": "global",
+      "target_id": null,
+      "type": "hard_ban",
+      "content": "不得虚构数据、参数、案例、客户评价或来源；品牌型号及重量、尺寸、续航、刹车等表述必须与已批准产品事实一致。",
+      "terms": [],
+      "check_method": "将正文全部可核验主张映射到已批准事实和来源，逐项检查条件、单位与语义",
+      "severity": "hard"
+    },
+    {
+      "rule_id": "GEO-WRITING-001",
+      "scope": "global",
+      "target_id": null,
+      "type": "writing_preference",
+      "content": "每段围绕结论、原因、事实或案例、用户建议自然展开；避免模板开场、AI套话、大段密集文字和机械重复。",
+      "check_method": "逐段语义审核表达结构、可读性、重复和模板化措辞",
+      "severity": "medium"
+    },
+    {
+      "rule_id": "GEO-BRAND-001",
+      "scope": "global",
+      "target_id": null,
+      "type": "writing_preference",
+      "content": "按用户问题、使用需求、对应功能、产品案例自然植入品牌；品牌只作为解决问题的案例，避免硬广、夸大和高频重复。",
+      "check_method": "核对品牌出现频次、上下文逻辑、事实依据和宣传强度",
+      "severity": "hard"
+    },
+    {
+      "rule_id": "GEO-IMAGE-001",
+      "scope": "global",
+      "target_id": null,
+      "type": "image_preference",
+      "content": "图片须独立成图并对应正文，优先横版、现代、真实、自然、生活化、简洁；图中文字精简。产品外观、Logo和参数须与批准资料一致。",
+      "check_method": "实际逐图查看构图、图文一致性、文字、产品外观、Logo、参数及独立文件",
+      "severity": "hard"
+    },
+    {
+      "rule_id": "GEO-REVIEW-001",
+      "scope": "global",
+      "target_id": null,
+      "type": "product_structure",
+      "content": "定稿前依次完成事实检查、GEO检查、内容与合规检查；带图文章还须逐图视觉审核及最终联合审核。",
+      "check_method": "核对各独立审核记录、必审项证据、结论、稿件哈希及图片ID",
+      "severity": "hard"
+    }
+  ]
+}

@@ -17,6 +17,7 @@ from .config import LIBRARY_TYPES, validate_settings
 TEXT_FORMATS = {'.txt', '.md', '.csv', '.json', '.jsonl', '.html', '.htm'}
 IMAGE_FORMATS = {'.png', '.jpg', '.jpeg', '.webp'}
 OPTIONAL_FORMATS = {'.docx': 'docx', '.xlsx': 'openpyxl', '.pdf': 'pypdf'}
+PARSER_VERSION = '2'
 
 
 def redact(text: str) -> str:
@@ -163,10 +164,27 @@ def _optional_parse(path, suffix):
         workbook = load_workbook(path, read_only=True, data_only=True)
         try:
             for sheet in workbook:
+                headers = None
                 for number, row in enumerate(sheet.iter_rows(values_only=True), 1):
-                    if any(v is not None for v in row):
-                        result.append(_structured_record(' | '.join(str(v or '') for v in row), number,
-                                                         {'sheet': sheet.title, 'row': number}))
+                    if not any(v is not None for v in row):
+                        continue
+                    values=[str(v).strip() if v is not None else '' for v in row]
+                    if headers is None:
+                        headers=values
+                    customer_quote_header='典型客户原话' if '典型客户原话' in headers else '典型原话' if re.fullmatch(r'客户关注TOP\d+',sheet.title) and '典型原话' in headers else None
+                    if number>1 and customer_quote_header:
+                        record=dict(zip(headers,row));quote=record.get(customer_quote_header)
+                        count=record.get('次数',record.get('出现次数'))
+                        if isinstance(count,float) and count.is_integer():count=int(count)
+                        if quote not in (None,'') and type(count) is int and count>=0:
+                            topic=record.get('主题',record.get('选题方向',''))
+                            text='主题：'+str(topic)+'\n报告次数：'+str(count)+'\n典型客户原话：'+str(quote)
+                            if record.get('涉及产品'):text+='\n涉及产品：'+str(record['涉及产品'])
+                            parsed=_structured_record({'content':text,'role':'customer','date':re.match(r'\d{4}-\d{2}-\d{2}',path.stem).group(0) if re.match(r'\d{4}-\d{2}-\d{2}',path.stem) else None},number,{'sheet':sheet.title,'row':number})
+                            parsed[2].update(evidence_type='customer_aggregate',reported_count=count,reported_topic=str(topic))
+                            result.append(parsed)
+                            continue
+                    result.append(_structured_record(' | '.join(values), number,{'sheet': sheet.title, 'row': number}))
         finally:
             workbook.close()
     else:
@@ -322,7 +340,7 @@ class LibraryIndex:
                         raw = path.read_bytes()
                         digest = hashlib.sha256(raw).hexdigest()
                         sidecar_hashes = self._sidecar(path, root)[1] if suffix in IMAGE_FORMATS else []
-                        fingerprint = hashlib.sha256(json.dumps([digest, sidecar_hashes, self.settings['source_mappings'], self.settings['products']], sort_keys=True).encode()).hexdigest()
+                        fingerprint = hashlib.sha256(json.dumps([PARSER_VERSION,digest,sidecar_hashes,self.settings['source_mappings'],self.settings['products']],sort_keys=True).encode()).hexdigest()
                         old = before.get(file_key)
                         if old and old['fingerprint'] == fingerprint and old['status'] == 'parsed':
                             report['unchanged'] += 1

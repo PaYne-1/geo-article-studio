@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geo-article-studio"
-version = "1.4.4"
+version = "1.4.5"
 description = "GEO图文生产助手 — portable agent host-mediated execution layer"
 requires-python = ">=3.11"
 dependencies = ["Pillow==11.3.0", "jsonschema==4.25.1"]
@@ -18,6 +18,9 @@ geo-article-studio = "geo_article_studio.cli:main"
 
 [tool.setuptools.data-files]
 "share/geo-article-studio/prompts" = ["prompts/*.md"]
+
+[tool.setuptools.package-data]
+geo_article_studio = ["builtin_rules.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

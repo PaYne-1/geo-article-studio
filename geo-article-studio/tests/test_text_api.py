@@ -60,12 +60,68 @@ def test_bad_api_result_requires_explicit_retry_without_host_fallback(engine,tex
     response.pop('extra');engine.run_text(tid)
     assert len(calls)==2
 
+def test_pre_network_input_rejection_does_not_require_paid_retry_approval(engine,text_server):
+    config,calls,_=text_server;config['max_input_bytes']=1;engine.settings['text_provider']=config
+    tid=engine.start('test-product','automatic',user_ref='user:choose-api',text_source='api')['task_id']
+    with pytest.raises(ValueError,match='上下文超过'):
+        engine.run_text(tid)
+    receipt=engine.status(tid)['text_requests'][0]
+    assert receipt['status']=='RESOLVED'
+    assert receipt['automatic_resolution']=='pre_network_validation'
+    assert calls==[]
+
+def test_rejected_aggregate_arithmetic_is_repaired_without_second_paid_request(engine,text_server):
+    config,calls,response=text_server;engine.settings['text_provider']=config
+    engine.index.row['metadata'].update(evidence_type='customer_aggregate',reported_count=7)
+    tid=engine.start('test-product','automatic',user_ref='user:choose-api',text_source='api')['task_id']
+    engine.run_text(tid)
+    response.clear();response.update({'topics':[{'topic_id':'T1','direction':'收纳','question_summary':'电动轮椅怎么收纳？','source_ids':['S1','NOT_A_CUSTOMER_SOURCE'],'scope':'product_specific','count_basis':'reported_aggregate','verified_count':999,'supporting_fact_ids':[],'distinct_angles':['收纳准备'],'gaps':[],'status':'ready','priority_reason':'汇总咨询'}],'coverage_note':'虚构汇总'})
+    result=engine.run_text(tid)
+    assert result['state']=='WAITING_SELECTION'
+    assert len(calls)==2
+    receipt=engine.status(tid)['text_requests'][-1]
+    assert receipt['raw_result']['topics'][0]['verified_count']==999
+    assert receipt['raw_result']['topics'][0]['source_ids']==['S1','NOT_A_CUSTOMER_SOURCE']
+    assert receipt['result']['topics'][0]['source_ids']==['S1']
+    assert receipt['result']['topics'][0]['verified_count']==7
+    assert {change['field'] for change in receipt['normalizations']}=={'topics.T1.source_ids','topics.T1.verified_count'}
+
+def test_planning_outline_is_normalized_to_structured_headings_without_rewriting_content():
+    from geo_article_studio.text_api import normalize_result
+    action={'stage':'PLANNING','input_refs':[]}
+    result={'outline':['expanded prose'],'geo':{'sections':[{'kind':'answer','heading':'先给结论'},{'kind':'summary','heading':'总结建议'}]}}
+    repaired,changes=normalize_result(action,result)
+    assert repaired['outline']==['先给结论','总结建议']
+    assert changes[0]['field']=='outline'
+
+def test_writing_headings_are_normalized_to_confirmed_plan_and_body_is_rebuilt():
+    from geo_article_studio.text_api import normalize_result
+    action={'stage':'WRITING','input_refs':[],'context':{'article':{'results':{'PLANNING':{'geo':{'sections':[
+        {'kind':'answer','heading':'答案'},{'kind':'scenario','heading':'客户咨询关注场景'}]}}}}}}
+    result={'body':'旧正文','geo':{'opening':'开头','sections':[{'kind':'scenario','heading':'自行改写标题','text':'有依据的内容'}]}}
+    repaired,changes=normalize_result(action,result)
+    assert repaired['geo']['sections'][0]['heading']=='客户咨询关注场景'
+    assert repaired['body']=='开头\n\n客户咨询关注场景\n有依据的内容'
+    assert {c['field'] for c in changes}=={'geo.sections[].heading','body'}
+
 def test_host_selection_never_calls_external_api(engine,text_server):
     config,calls,_=text_server;engine.settings['text_provider']=config
     tid=engine.start('test-product','automatic',user_ref='user:host',text_source='host')['task_id']
     assert engine.next_action(tid)['kind']=='NEEDS_MODEL'
     with pytest.raises(ValueError):engine.run_text(tid)
     assert not calls
+
+def test_user_can_switch_active_task_from_api_to_host_without_losing_stage(engine,text_server):
+    config,calls,response=text_server;engine.settings['text_provider']=config
+    tid=engine.start('test-product','automatic',user_ref='user:api',text_source='api')['task_id']
+    response['extra']='invalid'
+    with pytest.raises(Exception):engine.run_text(tid)
+    before=engine.status(tid)
+    result=engine.switch_text_source(tid,'host',user_ref='user:switch-to-host')
+    assert result['stage']==before['stage'] and result['text_source']=='host'
+    assert result['text_requests'][-1]['status']=='RESOLVED'
+    assert result['text_requests'][-1]['automatic_resolution']=='abandoned_after_user_source_switch'
+    assert engine.next_action(tid)['kind']=='NEEDS_MODEL'
 
 def test_received_response_recovers_without_second_paid_request(engine,text_server,monkeypatch):
     config,calls,_=text_server;engine.settings['text_provider']=config
@@ -101,6 +157,26 @@ def test_unknown_charge_blocks_retries_until_explicit_resolution(engine,text_ser
     assert engine.status(tid)['text_requests'][0]['status']=='UNKNOWN'
     with pytest.raises(ValueError):engine.run_text(tid)
     assert len(count)==1
+
+def test_automatic_mode_can_use_preauthorized_single_unknown_retry(engine,text_server,monkeypatch):
+    from geo_article_studio.text_api import TextProvider
+    from geo_article_studio.images import ProviderError
+    config,_,response=text_server;engine.settings['text_provider']=config
+    engine.settings['text_retry_policy']={'unknown_status_max_retries':1,'content_max_retries':3,
+                                          'retry_timeout_seconds':300,'approval_user_ref':'user:persistent-policy'}
+    attempts=[]
+    def flaky(_self,_action):
+        attempts.append(1)
+        if len(attempts)==1:raise ProviderError('request_timeout',status_unknown=True)
+        return dict(response)
+    monkeypatch.setattr(TextProvider,'generate',flaky)
+    tid=engine.start('test-product','automatic',user_ref='user:api',text_source='api')['task_id']
+    with pytest.raises(ProviderError):engine.run_text(tid)
+    assert engine.status(tid)['text_requests'][0]['status']=='UNKNOWN'
+    engine.run_text(tid)
+    assert len(attempts)==2
+    first=engine.status(tid)['text_requests'][0]
+    assert first['status']=='RESOLVED' and first['automatic_resolution']=='preauthorized_unknown_retry'
 
 def test_full_zero_image_flow_uses_api_for_each_independent_stage(engine,text_server):
     from test_engine import good_review
@@ -177,7 +253,7 @@ def test_cli_api_flow_with_real_library_index_and_saved_selection(tmp_path,text_
     config,calls,response=text_server
     libraries={name:str(tmp_path/name) for name in ('chat','product_info','reference_images','product_images')}
     for folder in libraries.values():Path(folder).mkdir()
-    (Path(libraries['chat'])/'fixture.txt').write_text('虚构测试问题：写作前如何核对资料？',encoding='utf-8')
+    (Path(libraries['chat'])/'fixture.txt').write_text('客户：写作前如何核对资料？',encoding='utf-8')
     settings={'libraries':libraries,'workspace_root':str(tmp_path/'work'),'output_root':str(tmp_path/'out'),'text_provider':config,'products':[{'product_id':'fixture','name':'虚构CLI测试产品','version':'test','source_ids':[],'image_source_ids':[]}],'source_mappings':{'chat/fixture.txt':'fixture'}}
     source=tmp_path/'input.json';target=tmp_path/'settings.json';source.write_text(json.dumps(settings),encoding='utf-8')
     script=Path(__file__).resolve().parents[1]/'scripts/geo.py';base=[sys.executable,str(script),'--config',str(target)]

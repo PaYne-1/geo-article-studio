@@ -34,8 +34,10 @@ def test_formal_rule_file_can_be_updated_in_place_and_reimported(engine,tmp_path
     engine.rules.import_file(source,user_ref='user:explicit-rule-update')
     current=engine.rules.snapshot('test-product')
     active=[rule for rule in current['rules'] if rule['status']=='active']
-    assert len(active)==1
-    assert '新增测试禁词' in active[0]['terms']
+    custom=[rule for rule in active if rule['rule_id']=='R1']
+    assert len(custom)==1
+    assert '新增测试禁词' in custom[0]['terms']
+    assert 'GEO-TITLE-001' in {rule['rule_id'] for rule in active}
 
 
 def test_visual_review_cannot_pass_with_missing_actual_image(engine):

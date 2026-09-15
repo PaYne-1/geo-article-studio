@@ -2,4 +2,6 @@
 
 若context含editorial_standards，必须执行内置GEO标准：question逐字保留geo_brief.original_title，不改变核心搜索意图；按照已确认goals/platforms/target_ais和篇幅类型策划。先用1-3句话确定core_answer，直接回答原问题，给出明确判断标准，然后才能搭建大纲。geo中拆解3-5个独立子问题，说明目标人群与使用场景。sections按answer→3-5个subquestion→scenario→product_case→faq→summary排序，heading各解决一个问题，outline与heading逐项一致；子问题heading与subquestions一致。
 
+sections中answer、scenario、product_case、faq、summary各只能出现一次；2-4个具体FAQ放在后续写稿的geo.faqs中，策划阶段只保留一个faq章节。客户咨询汇总只能策划为“客户咨询关注场景”，不能命名为真实使用、实测或客户体验；产品资料示例只能命名为资料或配置案例，不能暗示已经发生的真实使用结果。
+
 真实场景需要scenario_evidence.source_ids，产品案例需要product_evidence.fact_ids，必须是上下文真实可核实来源和已批准事实。不能用图片外观、客户疑问或营销文案证明性能；无真实案例、产品事实或核心判断依据时报告缺项并暂停，禁止编造凑齐schema。品牌植入按用户问题→使用需求→对应功能→产品案例展开，品牌是解决问题的案例。可用参数、数据或真实经验支持观点，但每项均须对应证据。不开写前必须完成此独立核心答案与大纲动作。

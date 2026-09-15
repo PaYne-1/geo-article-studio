@@ -20,6 +20,27 @@ from .config import api_resolution_ready
 def digest(value):
     return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
+def execution_config_digest(value):
+    """Ignore retry timing/policy fields that do not change requested content or providers."""
+    stable=copy.deepcopy(value)
+    stable.pop('text_retry_policy',None)
+    if isinstance(stable.get('text_provider'),dict):
+        stable['text_provider'].pop('timeout_seconds',None)
+    return digest(stable)
+
+def action_source_ids(task,article,stage):
+    """Keep whole-library evidence local once a human has selected a topic."""
+    if article is None or stage in ('PREFLIGHT','ANALYZING'):
+        return set(task['sources'])
+    topic=next((row for row in task.get('topics',[]) if row.get('topic_id')==article.get('topic_id')),None)
+    selected=set(topic.get('source_ids',[]) if topic else [])
+    for fact in task.get('facts',[]):
+        selected.update(fact.get('source_ids') or ([fact['source_id']] if fact.get('source_id') else []))
+    if stage in ('IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW'):
+        selected.update(sid for sid,row in task['sources'].items()
+                        if row.get('library_type') in ('reference_images','product_images'))
+    return selected & set(task['sources'])
+
 def validate_selection(topics,selection):
     lookup={t['topic_id']:t for t in topics}; seen=set(); articles=[]
     if not isinstance(selection,list) or not selection: raise ValueError('请人工多选主题并填写数量')
@@ -74,8 +95,12 @@ class Engine:
     def _sources(self,product,scope):
         rows=[]
         for lib in ('chat','product_info'):
-            rows.extend(self.index.search(scope.get('query','') if lib=='chat' else '',library_type=lib,product_id=product['product_id'],limit=30,**{k:v for k,v in scope.items() if k!='query'}))
-            if lib=='chat': rows.extend(self.index.search(scope.get('query',''),library_type=lib,product_id='general',limit=20,**{k:v for k,v in scope.items() if k!='query'}))
+            filters={k:v for k,v in scope.items() if k!='query'}
+            if lib=='chat':
+                filters={**filters,'role':'customer'}
+                rows.extend(self.index.search(scope.get('query',''),library_type=lib,product_id=product['product_id'],limit=200,**filters))
+                rows.extend(self.index.search(scope.get('query',''),library_type=lib,product_id='general',limit=200,**filters))
+            else:rows.extend(self.index.search('',library_type=lib,product_id=product['product_id'],limit=30,**filters))
         return {r['source_id']:r for r in rows}
 
     def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements='',text_source=None,geo_brief=None):
@@ -106,7 +131,7 @@ class Engine:
         return Path(self.settings['libraries'][row['library_type']])/row['location']['relative_path']
 
     def _check_snapshot(self,t):
-        if digest(t['config_snapshot'])!=digest(self.settings): raise ValueError('运行配置已变化；请明确迁移任务或恢复原配置，不能混用快照')
+        if execution_config_digest(t['config_snapshot'])!=execution_config_digest(self.settings): raise ValueError('运行配置已变化；请明确迁移任务或恢复原配置，不能混用快照')
         current_facts={f['fact_id']:f for f in self.products.facts(t['product']['product_id'],approved_only=True)}
         if any(f['fact_id'] not in current_facts or digest(f)!=digest(current_facts[f['fact_id']]) for f in t['facts']):raise ValueError('产品事实批准状态/内容变化或发现冲突；请refresh复审')
         for s in t['sources'].values():
@@ -140,7 +165,9 @@ class Engine:
             if prompt_name and not prompt_path.exists():prompt_path=Path(sys.prefix)/'share'/'geo-article-studio'/'prompts'/f'{prompt_name}.md'
             prompt=prompt_path.read_text(encoding='utf-8') if prompt_name and prompt_path.exists() else ''
             sources=[]
-            for s in t['sources'].values():
+            selected_source_ids=action_source_ids(t,a,stage)
+            for sid,s in t['sources'].items():
+                if sid not in selected_source_ids:continue
                 row={k:v for k,v in s.items() if k not in ('path','file_path','raw','text')}
                 row['snippet']=row.get('snippet','')[:800]
                 row['context_truncated']=len(s.get('snippet',''))>800;sources.append(row)
@@ -181,9 +208,19 @@ class Engine:
                     topic=next(x for x in t['topics'] if x['topic_id']==article['topic_id'])
                     candidate=copy.deepcopy(row.get('brief') or t.get('geo_brief') or {})
                     supplied_title=candidate.get('original_title')
-                    if supplied_title is not None and supplied_title.strip()!=topic['question_summary'].strip():
+                    user_confirmed_title=row.get('user_confirmed_title')
+                    if user_confirmed_title is not None:
+                        if not isinstance(user_confirmed_title,str) or not editorial.question_title(user_confirmed_title):
+                            raise ValueError('人工确认标题必须是以问号结尾的问题型标题')
+                        if supplied_title is not None and supplied_title.strip()!=user_confirmed_title.strip():
+                            raise ValueError('文章简报标题与人工确认标题不一致')
+                        candidate['original_title']=user_confirmed_title.strip()
+                        article['geo_brief_title_source']='explicit_user_selection'
+                    elif supplied_title is not None and supplied_title.strip()!=topic['question_summary'].strip():
                         raise ValueError('文章标题必须使用人工选中的聊天分析候选标题；如需改题请重新生成并选择候选标题')
-                    candidate['original_title']=topic['question_summary']
+                    else:
+                        candidate['original_title']=topic['question_summary']
+                        article['geo_brief_title_source']='current_topic_candidate'
                     article['geo_brief']=editorial.validate_brief(candidate)
                     article['geo_brief_user_ref']=user_ref
             if any(next(x for x in t['topics'] if x['topic_id']==a['topic_id'])['status']!='ready' for a in articles): raise ValueError('所选主题依据不足')
@@ -266,11 +303,14 @@ class Engine:
                         conv={(x['location']['relative_path'],x['metadata'].get('conversation_id')) for x in rows}
                         if any(c[1] in (None,'') for c in conv) or topic['verified_count']!=len(conv): raise ValueError('会话统计依据不可靠')
                     elif topic['count_basis']=='fragment' and topic['verified_count']!=len({(x['hash'],digest(x['location'])) for x in rows}): raise ValueError('片段统计不正确')
+                    elif topic['count_basis']=='reported_aggregate':
+                        if any(x['metadata'].get('evidence_type')!='customer_aggregate' or type(x['metadata'].get('reported_count')) is not int for x in rows):raise ValueError('汇总次数只能引用明确的客户关注统计行')
+                        if topic['verified_count']!=sum(x['metadata']['reported_count'] for x in rows):raise ValueError('客户关注汇总次数不正确')
                     elif topic['count_basis']=='unknown' and topic['verified_count'] is not None: raise ValueError('未知统计不能填数字')
             if stage=='PLANNING' and result['angle']!=a['angle']: raise ValueError('策划角度必须与所选独立角度一致；更换需人工修改')
             if t.get('editorial_version') and stage=='PLANNING':editorial.validate_plan(result,a['geo_brief'])
             if stage=='WRITING':
-                issues=check_text(result,t['facts'],self._applicable(t,a))
+                issues=check_text(result,t['facts'],self._applicable(t,a),[t['product']['name']])
                 if t.get('editorial_version'):editorial.validate_draft(result,a['results']['PLANNING'],a['geo_brief'])
                 else:
                     length=self.settings['defaults']['article_length']
@@ -279,7 +319,7 @@ class Engine:
             if stage=='IMAGE_PLANNING': self._validate_image_plan(t,a,result)
             if stage in ('TEXT_REVIEW','IMAGE_REVIEW','FINAL_REVIEW',*editorial.REVIEW_STAGES):
                 if stage in ('TEXT_REVIEW',*editorial.REVIEW_STAGES):
-                    issues=check_text(a['results']['WRITING'],t['facts'],self._applicable(t,a))
+                    issues=check_text(a['results']['WRITING'],t['facts'],self._applicable(t,a),[t['product']['name']])
                     if issues: raise ValueError('正式文本校验失败')
                 passed=validate_review(stage,result,visual_capable=visual_available(self.settings),has_images=bool(a['image_count']),mode=t['mode'])
                 if stage in ('IMAGE_REVIEW','FINAL_REVIEW') and a['image_count']:
@@ -287,7 +327,12 @@ class Engine:
                 if not passed:
                     t['history'].append({'stage':stage,'object_id':a['article_id'],'revision':t['revision'],'result':result})
                     if stage in ('TEXT_REVIEW',*editorial.REVIEW_STAGES) and a['text_attempts']<self.settings.get('limits',{}).get('max_text_revision_attempts',3):
-                        a['text_attempts']+=1;a['review_feedback']=result;t['stage']=t['state']='WRITING'
+                        a['text_attempts']+=1;a['review_feedback']=result
+                        if t.get('editorial_version') and stage in editorial.REVIEW_STAGES:
+                            for invalidated in ('PLANNING','WRITING',*editorial.REVIEW_STAGES,'IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW'):
+                                a['results'].pop(invalidated,None)
+                            a['images']={};t['stage']=t['state']='PLANNING'
+                        else:t['stage']=t['state']='WRITING'
                     else: t['resume_state']=stage;t['state']='PAUSED';t['error']='审核未通过或存在不确定项；请处理后继续'
                     return self._save(t)
             target=a['results'] if a else t['results']
@@ -565,3 +610,23 @@ class Engine:
     def resolve_text_request(self,tid,request_id,*,user_ref,actor='user'):
         from .text_api import resolve_text_request
         return resolve_text_request(self,tid,request_id,user_ref=user_ref,actor=actor)
+
+    def switch_text_source(self,tid,text_source,*,user_ref,actor='user'):
+        require_user(actor,user_ref)
+        if text_source not in ('host','api'):raise ValueError('文字来源必须为host或api')
+        with self._lock(tid):
+            t=self._load(tid)
+            if t['state']=='COMPLETED':raise ValueError('已交付任务请创建修订任务')
+            if any(r['status'] in ('UNKNOWN','IN_FLIGHT') for r in t.get('text_requests',[])):
+                raise ValueError('仍有收费状态未知的文字请求，需先处理')
+            if text_source=='api' and not TextProvider(self.settings.get('text_provider')).check()['ok']:
+                raise ValueError('第三方文字API未配置完整或凭据未接入')
+            old=t.get('text_source','host')
+            for request in t.get('text_requests',[]):
+                if request['status'] not in ('APPLIED','RESOLVED'):
+                    request.update(status='RESOLVED',previous_status=request['status'],
+                                   automatic_resolution='abandoned_after_user_source_switch',resolution_user_ref=user_ref,resolved_at=now())
+            t['text_source']=text_source
+            t.setdefault('authorization',{}).setdefault('text_source_changes',[]).append(
+                {'from':old,'to':text_source,'user_ref':user_ref,'at':now()})
+            return self._save(t)

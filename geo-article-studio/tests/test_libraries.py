@@ -226,6 +226,31 @@ def test_chat_statistics_never_counts_customers(settings):
     assert result['percentage'] is None
 
 
+def test_xlsx_customer_summary_rows_keep_reported_counts_and_only_customer_quotes(settings):
+    openpyxl = pytest.importorskip('openpyxl')
+    path = Path(settings['libraries']['chat']) / '2026-09-14_客服日报.xlsx'
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = '客户关注TOP10'
+    sheet.append(['主题', '次数', '占比', '典型原话', '涉及产品'])
+    sheet.append(['续航', 50, '8.7%', '这款是几个电池；有双电池的吗', '虚构产品'])
+    service = workbook.create_sheet('客服服务')
+    service.append(['客服问题主题', '次数', '典型原话'])
+    service.append(['重复解释问题', 4, '客服内部话术'])
+    workbook.save(path)
+
+    index = LibraryIndex(settings)
+    assert index.update()['parsed'] == 1
+    rows = index.search('续航', library_type='chat', role='customer')
+    assert len(rows) == 1
+    row = rows[0]
+    assert row['metadata']['evidence_type'] == 'customer_aggregate'
+    assert row['metadata']['reported_count'] == 50
+    assert row['metadata']['date'] == '2026-09-14'
+    assert '这款是几个电池' in row['snippet']
+    assert all('客服内部话术' not in item['snippet'] for item in index.search('客服内部话术',library_type='chat',role='customer'))
+
+
 def test_model_cannot_approve_or_invent_fact(settings):
     put(settings, 'product_info', '事实.txt', '重量：虚构10千克')
     settings['source_mappings'] = {'product_info/事实.txt': 'fictional-a'}

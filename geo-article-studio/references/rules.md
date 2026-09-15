@@ -1,6 +1,6 @@
 # 规则导入、学习及回滚
 
-正式规则导入JSON包含formal=true、真实version与非空rules数组，每条包含rule_id/scope/target_id/type/content/check_method/severity，词语禁用可加terms。config/rules.example.json示例标example=true，不能生产导入。原有TXT/MD禁限表可由当前模型按来源逐条整理为候选JSON，用户核对完整性后正式导入，不把示例表当法规全覆盖。
+技能自带用户确认的GEO编辑规则，可直接用于生产。外部自定义规则为可选扩展：导入JSON包含formal=true、真实version与非空rules数组，每条包含rule_id/scope/target_id/type/content/check_method/severity，词语禁用可加terms。config/rules.example.json示例标example=true，不能生产导入。原有TXT/MD禁限表可由当前模型按来源逐条整理为候选JSON，用户核对完整性后正式导入，不把示例表当法规全覆盖。
 
 scope为article/topic/product/style/global；type为hard_ban/conditional/writing_preference/image_preference/product_structure。article/topic还需绑定task_id，不能把A001带入下一任务。偏好不能发明参数或覆盖禁用。
 

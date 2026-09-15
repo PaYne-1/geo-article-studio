@@ -10,4 +10,5 @@ build/
 dist/
 work/
 outputs/
+artifacts/
 settings.json

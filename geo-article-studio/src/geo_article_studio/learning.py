@@ -16,8 +16,22 @@ class RuleStore:
     def __init__(self, root, *, simulation=False):
         self.root=Path(root); self.path=self.root/'rules.json';self.simulation=simulation
 
+    def _builtin(self):
+        source=Path(__file__).with_name('builtin_rules.json')
+        incoming=read_json(source)
+        rules=[dict(rule,status='active',version=1,activated_at='built-in',
+                    user_ref='builtin:user-confirmed-geo-standards') for rule in incoming['rules']]
+        return {'version':1,'formal':True,'simulation':False,'rules':rules,'history':[],
+                'imports':[{'path':'builtin://geo-editorial-rules','hash':file_hash(source),
+                            'source_version':incoming['version'],
+                            'user_ref':'builtin:user-confirmed-geo-standards'}]}
+
     def _load(self):
-        return read_json(self.path) if self.path.exists() else {'version':0,'formal':False,'rules':[],'history':[],'imports':[]}
+        if self.path.exists():
+            return read_json(self.path)
+        if not self.simulation:
+            return self._builtin()
+        return {'version':0,'formal':False,'rules':[],'history':[],'imports':[]}
 
     def _save(self, data):
         old=self._load()
@@ -94,5 +108,7 @@ class RuleStore:
         data=self._load()
         if not data['imports'] or (not data['formal'] and not (self.simulation and data.get('simulation'))) or (data.get('simulation') and not self.simulation): raise ValueError('尚未导入正式禁限规则，禁止正式生产')
         for item in data['imports']:
-            if not Path(item['path']).is_file() or file_hash(Path(item['path']))!=item['hash']: raise ValueError('规则来源变化或丢失，请重新导入')
+            if item['path']=='builtin://geo-editorial-rules':
+                if file_hash(Path(__file__).with_name('builtin_rules.json'))!=item['hash']: raise ValueError('内置规则校验失败，请重新安装技能')
+            elif not Path(item['path']).is_file() or file_hash(Path(item['path']))!=item['hash']: raise ValueError('规则来源变化或丢失，请重新导入')
         return {'version':data['version'],'formal':data['formal'],'simulation':data.get('simulation',False),'rules':copy.deepcopy(data['rules']),'imports':data['imports']}

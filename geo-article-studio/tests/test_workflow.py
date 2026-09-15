@@ -12,22 +12,29 @@ def test_counts_require_human_and_per_article():
         with pytest.raises(ValueError):
             validate_selection(topics, [{"topic_id":"T01","article_count":2,"image_counts":bad}])
 
-def test_rule_requires_formal_import_scope_and_rollback(tmp_path):
+def test_builtin_rules_allow_production_and_custom_import_scope_and_rollback(tmp_path):
     from geo_article_studio.learning import RuleStore
     import json
     store = RuleStore(tmp_path)
-    with pytest.raises(ValueError): store.snapshot('test-product')
+    initial=store.snapshot('test-product')
+    assert initial['formal'] is True
+    assert any(item['path'].startswith('builtin://') for item in initial['imports'])
+    assert {'GEO-TITLE-001','GEO-REVIEW-001'}.issubset({r['rule_id'] for r in initial['rules']})
     path = tmp_path/'真实规则.json'
     path.write_text(json.dumps({'formal':True,'version':'v1','rules':[{'rule_id':'R1','scope':'global','target_id':None,'type':'hard_ban','content':'禁止虚构保证','terms':['绝对保证'],'check_method':'词语及语义','severity':'hard'}]}),encoding='utf-8')
     store.import_file(path, user_ref='user:import')
-    assert store.snapshot('test-product')['version'] == 1
+    imported=store.snapshot('test-product')
+    assert imported['version'] == initial['version']+1
+    imported_version=imported['version']
     proposal=store.propose({'scope':'article','target_id':'A001','type':'image_preference','content':'这篇不要人物','check_method':'视觉检查'}, 'F1')
     assert proposal['status']=='proposed'
     store.activate([proposal['rule_id']], 'user:approve')
-    assert len(store.applicable('test-product',article_id='A001'))==2
-    assert len(store.applicable('test-product',article_id='A002'))==1
-    store.rollback(1, 'user:rollback')
-    assert len(store.applicable('test-product',article_id='A001'))==1
+    active_a1={r['rule_id'] for r in store.applicable('test-product',article_id='A001')}
+    active_a2={r['rule_id'] for r in store.applicable('test-product',article_id='A002')}
+    assert {'R1',proposal['rule_id']}.issubset(active_a1)
+    assert 'R1' in active_a2 and proposal['rule_id'] not in active_a2
+    store.rollback(imported_version, 'user:rollback')
+    assert proposal['rule_id'] not in {r['rule_id'] for r in store.applicable('test-product',article_id='A001')}
 
 def test_dispatch_requires_direct_user_and_missing_only():
     from geo_article_studio.host_bridge import form_for, route
@@ -46,3 +53,8 @@ def test_review_rejects_unsupported_digits_and_bans():
     assert check_text({'title':'产品说明','body':'重量8公斤','claims':[]}, facts,rules)
     assert check_text({'title':'保 证 治 愈','body':'说明','claims':[]},facts,rules)
     assert not check_text({'title':'产品说明','body':'重量9公斤','claims':[{'text':'重量9公斤','fact_ids':['F1']}]}, facts,rules)
+
+def test_registered_product_name_digits_are_not_treated_as_parameters():
+    from geo_article_studio.review import check_text
+    article={'title':'218轻便侠适合谁？','body':'218轻便侠是本次已注册产品。','claims':[]}
+    assert check_text(article,[],[],known_product_names=['218轻便侠'])==[]

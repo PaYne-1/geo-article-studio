@@ -49,7 +49,7 @@ def obj(properties,required=None):
     return {'type':'object','properties':properties,'required':list(properties) if required is None else required,'additionalProperties':False}
 S={'type':'string','minLength':1}; STRINGS={'type':'array','items':S}; IDS=STRINGS
 CLAIM=obj({'text':S,'fact_ids':IDS})
-TOPIC=obj({'topic_id':S,'direction':S,'question_summary':S,'source_ids':IDS,'scope':{'enum':['product_specific','general']},'count_basis':{'enum':['conversation','fragment','unknown']},'verified_count':{'type':['integer','null'],'minimum':0},'supporting_fact_ids':IDS,'distinct_angles':STRINGS,'gaps':STRINGS,'status':{'enum':['ready','needs_evidence']},'priority_reason':S})
+TOPIC=obj({'topic_id':S,'direction':S,'question_summary':S,'source_ids':IDS,'scope':{'enum':['product_specific','general']},'count_basis':{'enum':['conversation','fragment','reported_aggregate','unknown']},'verified_count':{'type':['integer','null'],'minimum':0},'supporting_fact_ids':IDS,'distinct_angles':STRINGS,'gaps':STRINGS,'status':{'enum':['ready','needs_evidence']},'priority_reason':S})
 IMAGE=obj({'image_id':S,'article_id':S,'paragraph':{'type':'integer','minimum':1},'purpose':S,'scene':S,'people_actions':{'type':'string'},'show_product':{'type':'boolean'},'product_image_ids':IDS,'reference_image_ids':IDS,'borrow':STRINGS,'immutable':STRINGS,'allowed_text':{'type':'string'},'prompt':S,'fact_ids':IDS})
 CHECK=obj({'check_id':S,'verdict':{'enum':['passed','failed','needs_review']},'severity':{'enum':['info','warning','hard']},'evidence':S,'suggestion':{'type':'string'}})
 REVIEW=obj({'verdict':{'enum':['passed','failed','needs_review']},'reviewer':{'enum':['model','qwen','human']},'checks':{'type':'array','items':CHECK,'minItems':1},'viewed_image_ids':IDS})

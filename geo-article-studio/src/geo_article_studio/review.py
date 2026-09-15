@@ -5,7 +5,7 @@ import unicodedata
 def normalized(text):
     return re.sub(r'[\W_]+','',unicodedata.normalize('NFKC',text)).lower()
 
-def check_text(article,facts,rules):
+def check_text(article,facts,rules,known_product_names=()):
     issues=[]; title=article.get('title',''); body=article.get('body',''); text=title+'\n'+body
     if not title.strip() or '\n' in title or not body.strip(): issues.append('标题/正文为空或标题不止一行')
     if re.search(r'\[待补充\]|TODO|待确认参数|候选标题|生图提示词',text): issues.append('成稿含占位或过程内容')
@@ -23,7 +23,11 @@ def check_text(article,facts,rules):
     for c in claims:
         if not c.get('text') or c['text'] not in text or not c.get('fact_ids') or any(x not in factmap for x in c.get('fact_ids',[])):
             issues.append('主张缺少有效批准事实映射')
-    for match in re.finditer(r'\d+(?:\.\d+)?(?:%|％)?',text):
+    numeric_text=text
+    for name in known_product_names:
+        if isinstance(name,str) and name:
+            numeric_text=numeric_text.replace(name,' ')
+    for match in re.finditer(r'\d+(?:\.\d+)?(?:%|％)?',numeric_text):
         value=match.group()
         token=unicodedata.normalize('NFKC',value)
         if not any(token in numbers(c.get('text','')) and any(token in numbers(fact_text(factmap.get(fid,{}))) for fid in c.get('fact_ids',[])) for c in claims):
