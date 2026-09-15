@@ -43,31 +43,30 @@ API Key可从聊天接收后由Agent通过configure-api --key-stdin接入，或�
 
 ## 开始任务
 
-调用`form 开始任务`。发送当前产品（默认218轻便侠）、模式（学习/自动）、文字来源text_source（host/api）、聊天范围及额外要求；文字来源每次显示两项并等待明确选择，不能预选上次结果；已有模式可预填，没有则请用户选，不自行决定。之后预检资料、分析真实主题，再让用户多选并填写每主题文章数、每篇图片数，0也必须明说。
+调用`form 开始任务`。发送当前产品（默认218轻便侠）、模式（学习/自动）、文字来源text_source（host/api）、聊天范围及额外要求；文字来源每次显示两项并等待明确选择，不能预选上次结果；已有模式可预填，没有则请用户选，不自行决定。开始表单不要求用户提供标题。之后预检资料，分析聊天库中真实客户最在意的问题，生成问题型钩子标题候选，再让用户人工多选并填写每主题文章数、每篇图片数，0也必须明说。多选即确认标题。
 
 学习模式逐步确认、修改并复盘；自动模式在人工完成任务配置后持续推进。最终全部成功只返回真实成品根目录。缺配置或任务未完成时说明当前缺项，不能生成假成品路径。
 
-## v1.4：GEO需求表
+## v1.4.4：GEO需求表与聊天驱动标题
 
 开始任务同时发送以下选项，已提供的内容预填：
 
 | 表单字段 | 用户填写/选择 | 转入任务brief |
 | --- | --- | --- |
-| original_geo_title | 原始GEO问题型标题，不能由Agent暗自确认 | original_title |
 | goals | 品牌曝光 / 型号种草 / 用户转化 / AI引用，多选 | goals |
 | platforms | 知乎、头条、搜狐、百家号、企鹅号、网易等，多选，可填其他 | platforms |
 | target_ais | DeepSeek、豆包、文心一言、元宝等，多选，可填其他 | target_ais |
 | article_type | short短篇600–800字 / long普通长文至少1000字 | article_type |
 
-用户还没有标题时，可先完成资料预检和主题分析，再确认每个主题的问题标题；select正式提交前必须补齐。Agent把用户确认值写入JSON，不让用户手填内部结构。模板config/geo_brief.example.json刻意留空，不能直接当已确认需求。
+标题不在开始表单中填写。ANALYZING必须基于明确客户角色的聊天source_ids，按可核验频次、决策影响和资料支撑生成问题型钩子候选；question_summary必须以问号结尾。用户多选候选后，执行层自动把选中topic.question_summary绑定为该主题各篇文章的geo_brief.original_title，后续模型不得替换。Agent把用户确认值写入JSON，不让用户手填内部结构。模板config/geo_brief.example.json仅供内部结构参考，不能直接当已确认需求。
 
-全任务确实共用一个原始问题时，start加--brief-file指向已填写JSON（仅含上表第三列5个键）。多主题分别确认时，在select的每个主题行添加brief对象，覆盖全任务brief：
+CLI兼容已有集成：全任务brief仍可通过start --brief-file提供；其中original_title必须与后来人工选中的候选一致。通常在select的每个主题行只提交目标、平台、目标AI和篇幅，标题由执行层写入：
 
 ```json
-[{"topic_id":"实际选中ID","article_count":1,"image_counts":[0],"brief":{"original_title":"用户确认的问题？","goals":["AI引用"],"platforms":["用户确认平台"],"target_ais":["用户确认AI"],"article_type":"short"}}]
+[{"topic_id":"实际选中ID","article_count":1,"image_counts":[0],"brief":{"goals":["AI引用"],"platforms":["用户确认平台"],"target_ais":["用户确认AI"],"article_type":"short"}}]
 ```
 
-以上仅示意内部映射，标题、目标、平台、AI及0图必须来自实际用户选择。不同原题不要共用一个未核对brief。人群、场景和3–5子问题在策划阶段基于来源拆解，学习模式展示确认。
+以上仅示意内部映射。标题来自聊天分析候选并由用户多选确认；目标、平台、AI及0图也必须来自实际用户选择。不同候选不要共用一个未核对brief。人群、场景和3–5子问题在策划阶段基于来源拆解，学习模式展示确认。
 
 新任务篇幅只按short/long的内置范围执行，旧settings.defaults.article_length仅供历史任务兼容，读取旧文件时保留，但不再放入配置表的values、sections或用户问题中。图片数量仍由用户逐篇填，2–4张仅是建议。
 

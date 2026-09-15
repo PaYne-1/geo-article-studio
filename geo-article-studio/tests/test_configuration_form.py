@@ -59,10 +59,11 @@ def cli(config,*args):
     return result.stdout
 
 
-def test_partial_save_returns_checks_and_new_process_reads_saved_settings(tmp_path):
+def test_partial_save_returns_checks_and_new_process_reads_saved_settings(tmp_path,monkeypatch):
+    monkeypatch.delenv('GEO_TEST_PERSISTENCE_MISSING_KEY',raising=False)
     config=tmp_path/'runtime'/'settings.json'
     data=tmp_path/'partial.json'
-    data.write_text(json.dumps({'default_product_name':'虚构配置测试','text_provider':{'base_url':'https://example.invalid/v1','model':'persisted-model'}}),encoding='utf-8')
+    data.write_text(json.dumps({'default_product_name':'虚构配置测试','text_provider':{'base_url':'https://example.invalid/v1','model':'persisted-model','api_key_env':'GEO_TEST_PERSISTENCE_MISSING_KEY'}}),encoding='utf-8')
     saved=json.loads(cli(config,'configure','--file',str(data)))
     assert saved['saved']==str(config.resolve())
     assert saved['configuration']['persistence']['saved_config_loaded'] is True

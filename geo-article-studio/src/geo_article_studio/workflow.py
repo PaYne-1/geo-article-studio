@@ -178,7 +178,13 @@ class Engine:
             if t.get('editorial_version'):
                 for article in articles:
                     row=next(r for r in selection if r['topic_id']==article['topic_id'])
-                    article['geo_brief']=editorial.validate_brief(row.get('brief',t.get('geo_brief')))
+                    topic=next(x for x in t['topics'] if x['topic_id']==article['topic_id'])
+                    candidate=copy.deepcopy(row.get('brief') or t.get('geo_brief') or {})
+                    supplied_title=candidate.get('original_title')
+                    if supplied_title is not None and supplied_title.strip()!=topic['question_summary'].strip():
+                        raise ValueError('文章标题必须使用人工选中的聊天分析候选标题；如需改题请重新生成并选择候选标题')
+                    candidate['original_title']=topic['question_summary']
+                    article['geo_brief']=editorial.validate_brief(candidate)
                     article['geo_brief_user_ref']=user_ref
             if any(next(x for x in t['topics'] if x['topic_id']==a['topic_id'])['status']!='ready' for a in articles): raise ValueError('所选主题依据不足')
             missing=[];d=self.settings.get('defaults',{});num=sum(a['image_count'] for a in articles)
@@ -251,6 +257,8 @@ class Engine:
                 topic_ids=[x['topic_id'] for x in result['topics']]
                 if len(topic_ids)!=len(set(topic_ids)): raise ValueError('主题ID重复')
                 for topic in result['topics']:
+                    if t.get('editorial_version') and not editorial.question_title(topic['question_summary']):
+                        raise ValueError('聊天分析候选必须是问题型钩子标题，并以问号结尾')
                     rows=[t['sources'][s] for s in topic['source_ids']]
                     if not rows or any(x['library_type']!='chat' or x['metadata'].get('role') not in ('customer','客户','user') for x in rows): raise ValueError('主题必须来自明确客户发问，客服或未知角色不得算客户诉求')
                     if topic['scope']=='product_specific' and any(x['product_id']!=t['product']['product_id'] for x in rows): raise ValueError('通用来源不得冒称产品专属反馈')

@@ -93,19 +93,37 @@ def prepare(e,mode='automatic',configured_brief=True):
     submit(e,tid,{'topics':[{'topic_id':'T1','direction':'资料核对','question_summary':brief()['original_title'],'source_ids':['S1'],'scope':'product_specific','count_basis':'conversation','verified_count':1,'supporting_fact_ids':['F1'],'distinct_angles':['核对准备'],'gaps':[],'status':'ready','priority_reason':'虚构客户问题'}],'coverage_note':'单个虚构会话'})
     return tid
 
-def test_new_tasks_block_missing_brief_and_expose_required_schema(current_engine):
+def test_start_form_generates_titles_from_chat_and_selection_binds_confirmed_title(current_engine):
     from geo_article_studio.host_bridge import form_for
     assert 'article_length' not in form_for('配置任务',{})['missing']
     form=form_for('开始任务',{})
-    assert set(('original_geo_title','goals','platforms','target_ais','article_type'))<=set(form['missing'])
+    assert 'original_geo_title' not in form['values']
+    assert 'original_geo_title' not in form['missing']
+    assert set(('goals','platforms','target_ais','article_type'))<=set(form['missing'])
+    assert form['title_generation']['source']=='chat_analysis'
+    assert form['title_generation']['confirmation']=='topic_multi_select'
     e=current_engine;tid=prepare(e,configured_brief=False)
     row={'topic_id':'T1','article_count':1,'image_counts':[0]}
     with pytest.raises(ValueError):e.select(tid,[row],user_ref='test:user:select')
-    row['brief']=brief();e.select(tid,[row],user_ref='test:user:confirmed-brief')
+    row['brief']={k:v for k,v in brief().items() if k!='original_title'}
+    e.select(tid,[row],user_ref='test:user:confirmed-brief')
     action=e.next_action(tid)
     assert 'geo' in action['result_schema']['required']
     assert action['context']['geo_brief']==brief()
     assert action['context']['editorial_standards']['length']['short']==[600,800]
+
+def test_selected_chat_title_must_be_question_and_cannot_be_replaced(current_engine):
+    from test_engine import submit
+    e=current_engine
+    tid=e.start('test-product','automatic',text_source='host',user_ref='test:user:start')['task_id']
+    submit(e,tid,{'understanding':'虚构GEO标准流程测试','source_ids':['S1'],'gaps':[]})
+    invalid={'topics':[{'topic_id':'T1','direction':'资料核对','question_summary':'出行资料核对','source_ids':['S1'],'scope':'product_specific','count_basis':'conversation','verified_count':1,'supporting_fact_ids':['F1'],'distinct_angles':['核对准备'],'gaps':[],'status':'ready','priority_reason':'虚构客户问题'}],'coverage_note':'单个虚构会话'}
+    with pytest.raises(ValueError,match='问题型钩子标题'):submit(e,tid,invalid)
+
+    tid=prepare(e,configured_brief=False)
+    supplied=brief();supplied['original_title']='另一个未经选中的问题？'
+    row={'topic_id':'T1','article_count':1,'image_counts':[0],'brief':supplied}
+    with pytest.raises(ValueError,match='候选标题'):e.select(tid,[row],user_ref='test:user:select')
 
 def test_new_automatic_flow_requires_three_ordered_reviews_and_exports(current_engine):
     from test_engine import submit,good_review
