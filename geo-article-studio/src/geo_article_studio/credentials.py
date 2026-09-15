@@ -1,6 +1,7 @@
 """Hidden API credential intake and persistent user-environment storage."""
 import getpass
 import os
+import sys
 
 NAMES={'image':'GEO_IMAGE_API_KEY','text':'GEO_TEXT_API_KEY'}
 
@@ -40,12 +41,12 @@ def persist_user_environment(name,value):
         pass
     return 'windows_user_environment'
 
-def configure(kind,model):
+def configure(kind,model,*,key_stdin=False):
     if kind not in NAMES:raise ValueError('API类型必须为image或text')
     if not isinstance(model,str) or not model.strip() or len(model)>160 or any(ord(c)<32 for c in model):raise ValueError('模型名称无效')
-    secret=getpass.getpass('请粘贴API Key（输入隐藏，回车保存）：')
+    secret=sys.stdin.read(8194).rstrip('\r\n') if key_stdin else getpass.getpass('请粘贴API Key（输入隐藏，回车保存）：')
     if not isinstance(secret,str) or not secret.strip():raise ValueError('API Key不能为空')
-    if len(secret)>8192 or '\x00' in secret:raise ValueError('API Key格式无效')
+    if len(secret)>8192 or any(ord(c)<32 for c in secret):raise ValueError('API Key格式无效')
     name=NAMES[kind]
     storage=persist_user_environment(name,secret)
     return {'kind':kind,'model':model.strip(),'environment':name,'connected':True,'storage':storage}

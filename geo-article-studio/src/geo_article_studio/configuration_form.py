@@ -92,7 +92,7 @@ def configuration_form(settings,provided=None,*,config_path=None,persisted=None)
             'persistence':{'saved_config_loaded':loaded,'config_path':config_path,'can_save_partial':True,'merge_updates':True},
             'recommendations':{'orientation':'landscape','dimensions':'Agent依据实际接口支持自动选择适合文章的横版规格；不猜尺寸，不覆盖已核实规格'},
             'checks':local_checks(settings),
-            'credential_notice':'API Key通过本地隐藏输入自动配置，不写入普通JSON、不在输出中回显。',
+            'credential_notice':'可直接在聊天中提供API Key，并注明图片或文字用途及模型名称；Agent接收后在本地持久配置，不回显Key、不写入普通JSON。也可选择本地隐藏输入。聊天中发送的Key可能保留在会话记录中。',
             'technical_notice':'Agent根据模型名称查找官方文档并自动补齐地址、适配器、接口路径、参考图能力、格式和尺寸；无法唯一识别或协议不受支持时明确报告，不能猜测或发收费探测请求。',
             'text_notice':'配置跨任务保存；每次开始任务仍由用户选择当前Agent默认模型或第三方文字API。'}
     result['message']=render_configuration(result)
@@ -114,7 +114,7 @@ def render_configuration(form):
             if key in VIRTUAL_LABELS:
                 kind='image_api' if key=='image_api_key' else 'text_api'
                 credential=form['checks']['credentials'][kind]
-                lines.append('- API Key：'+('已接入当前进程（不显示值）' if credential['connected'] else '未配置；提供模型名称后通过本地隐藏输入自动配置'))
+                lines.append('- API Key：'+('已接入当前进程（不显示值）' if credential['connected'] else '未配置；可在这里发送并注明模型，也可本地隐藏输入'))
                 continue
             value=values[key]
             rendered='未填写' if empty(value) else json.dumps(value,ensure_ascii=False) if isinstance(value,(list,dict)) else str(value)

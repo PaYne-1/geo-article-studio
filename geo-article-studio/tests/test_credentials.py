@@ -1,7 +1,23 @@
 import json
+import io
 from pathlib import Path
 
 import pytest
+
+@pytest.mark.parametrize('kind', ['image','text'])
+def test_agent_can_import_chat_key_via_stdin_without_echo(tmp_path,monkeypatch,kind):
+    from geo_article_studio import credentials
+    from geo_article_studio.cli import main
+    import sys
+    captured={}
+    monkeypatch.setattr(sys,'stdin',io.StringIO('chat-fixture-secret\n'))
+    monkeypatch.setattr(credentials,'persist_user_environment',lambda name,value:captured.update(name=name,value=value) or 'test_store')
+    output=io.StringIO()
+    monkeypatch.setattr(sys,'stdout',output)
+    config=tmp_path/'settings.json'
+    assert main(['--config',str(config),'configure-api','--kind',kind,'--model','fixture-model','--key-stdin'])==0
+    assert captured=={'name':credentials.NAMES[kind],'value':'chat-fixture-secret'}
+    assert 'chat-fixture-secret' not in output.getvalue()+config.read_text(encoding='utf-8')
 
 
 def test_credential_command_reads_hidden_input_and_never_returns_secret(tmp_path,monkeypatch):

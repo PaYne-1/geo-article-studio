@@ -7,9 +7,9 @@
 - [完整源码与开发命令](geo-article-studio/README.md)
 - [多Agent安装与兼容性](geo-article-studio/docs/多Agent安装与兼容性.md)
 - [首次配置](geo-article-studio/docs/安装与首次配置.md)和[日常操作](geo-article-studio/docs/日常操作示例.md)
-- [v1.4.2可安装ZIP](dist/geo-article-studio-1.4.2.zip)和[SHA256](dist/geo-article-studio-1.4.2.zip.sha256)
+- [v1.4.3可安装ZIP](dist/geo-article-studio-1.4.3.zip)和[SHA256](dist/geo-article-studio-1.4.3.zip.sha256)
 - [本次更新与测试](geo-article-studio/docs/v1.4.2极简API配置与测试.md)和[已知限制](geo-article-studio/docs/已知限制.md)
-- [最终ZIP安装验证](dist/geo-article-studio-1.4.2.validation.md)
+- [最终ZIP安装验证](dist/geo-article-studio-1.4.3.validation.md)
 
 四库按需检索，人工多选主题并逐篇填写图数，学习模式确认、修改、复盘和规则持久化，自动模式完成配置后连续生成和独立审核。成品逐篇独立目录，标题TXT、正文TXT和实际图片分别保存。
 
@@ -24,3 +24,6 @@
 配置表已移除旧字数输入，区分基础/条件必填与已保存状态。用户提供服务信息，Agent核对协议技术字段；可分次保存，返回非联网检查。升级既有安装后需重新加载技能，不沿用旧会话表格。
 
 v1.4.2中，配置任务不再询问禁限规则路径、API地址、服务商、文档、图片文字策略等字段。两类API分别只收模型名称和本地隐藏输入的API Key，调用上限可选；其余技术配置由Agent依据官方文档完成。
+
+
+v1.4.3允许直接在聊天中提供API Key并注明图片/文字用途和模型，Agent接收后在本地配置且不回显；也可使用隐藏输入。聊天及工具记录可能保留输入。

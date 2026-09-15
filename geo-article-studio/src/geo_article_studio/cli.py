@@ -26,6 +26,7 @@ def parser():
         return c
     c=command('form');c.add_argument('trigger');c.add_argument('--file',type=Path);c.add_argument('--format',choices=['json','text'],default='json')
     c=command('configure-api');c.add_argument('--kind',choices=['image','text'],required=True);c.add_argument('--model',required=True)
+    c.add_argument('--key-stdin',action='store_true',help='从标准输入接入用户提供的Key，不回显；默认保留隐藏交互输入')
     c=command('host-check');c.add_argument('--file',type=Path);c.add_argument('--stage',choices=HOST_STAGES,default='PREFLIGHT');c.add_argument('--mode',choices=['automatic','learning'],default='automatic');c.add_argument('--with-images',action='store_true')
     command('configure',file=True);command('doctor');command('index')
     c=command('search');c.add_argument('query');c.add_argument('--library',choices=list(DEFAULT_SETTINGS['libraries']));c.add_argument('--product-id');c.add_argument('--limit',type=int,default=10)
@@ -87,7 +88,7 @@ def run(args):
     if args.command=='configure-api':
         from .credentials import configure
         incoming=load_settings(args.config) if args.config.is_file() else copy.deepcopy(DEFAULT_SETTINGS)
-        credential=configure(args.kind,args.model)
+        credential=configure(args.kind,args.model,key_stdin=args.key_stdin)
         provider_key='image_provider' if args.kind=='image' else 'text_provider'
         existing=incoming.get(provider_key) if isinstance(incoming.get(provider_key),dict) else {}
         same_model=existing.get('model')==credential['model']
