@@ -15,11 +15,16 @@ DEFAULT_SETTINGS = {
     'products': [], 'source_mappings': {},
     'defaults': {'language': 'zh-CN', 'mode': None, 'article_length': None,
                  'image_ratio': None, 'image_dimensions': None, 'image_format': 'png',
-                 'image_text_policy': None, 'image_count_includes_cover': True},
+                 'image_text_policy': 'auto', 'image_count_includes_cover': True},
     'limits': {'max_generation_attempts_per_image': 3, 'max_text_revision_attempts': 3,
                'max_parallel_image_requests': 1, 'max_image_requests_per_task': None,
                'max_cost': None, 'currency': None},
 }
+
+def api_resolution_ready(settings,kind):
+    """Legacy configurations stay valid; an explicit pending model switch blocks use."""
+    record=(settings.get('api_resolution') or {}).get(kind)
+    return not record or record.get('status')=='resolved_local'
 
 
 def _merge(base, override):
@@ -146,6 +151,9 @@ def validate_settings(data: dict, production: bool = False) -> dict:
     for key in ('max_generation_attempts_per_image', 'max_text_revision_attempts', 'max_parallel_image_requests'):
         if type(limits.get(key)) is not int or limits[key] < 1:
             raise ValueError(f'{key} 必须为正整数，次数包含首次')
+    image_cap=limits.get('max_image_requests_per_task')
+    if image_cap is not None and (type(image_cap) is not int or image_cap<1):
+        raise ValueError('max_image_requests_per_task 必须为空或正整数')
     if production:
         missing = [f'libraries.{k}' for k in LIBRARY_TYPES if settings['libraries'][k] is None]
         missing += [k for k in ('workspace_root', 'output_root') if settings[k] is None]

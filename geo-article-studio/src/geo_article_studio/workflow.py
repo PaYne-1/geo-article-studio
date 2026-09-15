@@ -15,6 +15,7 @@ from .review import check_text, validate_review
 from .hosts import PROTOCOL, assess_host, require_declared_capabilities, visual_available, producer_identity
 from .text_api import TextProvider, uses_text_api
 from . import editorial
+from .config import api_resolution_ready
 
 def digest(value):
     return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
@@ -82,6 +83,7 @@ class Engine:
         require_declared_capabilities(self.settings,mode=mode)
         if mode not in ('automatic','learning'): raise ValueError('模式必须为learning或automatic')
         if text_source not in ('host','api'):raise ValueError('请选择当前宿主或第三方文字API')
+        if text_source=='api' and not api_resolution_ready(self.settings,'text'):raise ValueError('第三方文字模型的接口协议尚未由Agent核对完成，请先完成技术配置')
         if text_source=='api' and not TextProvider(self.settings.get('text_provider')).check()['ok']:raise ValueError('第三方文字API未配置完整或凭据未接入，请先配置任务')
         if geo_brief is not None:geo_brief=editorial.validate_brief(geo_brief)
         product=self.products.get(product_id);report=self.index.update();scope=chat_scope or {}
@@ -185,6 +187,7 @@ class Engine:
                 elif d['article_length']['max']<d['article_length']['min']: missing.append('article_length范围')
             if not self.output: missing.append('output_root')
             if num:
+                if not api_resolution_ready(self.settings,'image'):missing.append('图片模型接口协议尚未由Agent核对完成')
                 dims=d.get('image_dimensions');ratio=d.get('image_ratio')
                 if not isinstance(dims,list) or len(dims)!=2 or any(type(n) is not int or n<1 for n in dims): missing.append('image_dimensions必须是两个正整数')
                 if isinstance(ratio,str) and re.fullmatch(r'\d+:\d+',ratio) and isinstance(dims,list) and len(dims)==2:
@@ -192,11 +195,11 @@ class Engine:
                     if rw<1 or rh<1 or dims[0]*rh!=dims[1]*rw: missing.append('比例和像素尺寸不一致')
                 else: missing.append('image_ratio须为宽:高')
                 if d.get('image_format') not in ('png','jpeg','jpg','webp'): missing.append('image_format不支持')
-                if d.get('image_text_policy') not in ('none','specified'): missing.append('image_text_policy须为none或specified')
+                if d.get('image_text_policy') not in ('none','specified','auto'): missing.append('image_text_policy须为none、specified或auto')
                 for k in ('image_ratio','image_dimensions','image_format','image_text_policy'):
                     if d.get(k) is None: missing.append('defaults.'+k)
                 cap=self.settings.get('limits',{}).get('max_image_requests_per_task')
-                if type(cap) is not int or cap<num: missing.append('limits.max_image_requests_per_task（必须覆盖本轮图片数）')
+                if cap is not None and (type(cap) is not int or cap<num): missing.append('limits.max_image_requests_per_task（已填写时必须覆盖本轮图片数）')
                 if not self.settings.get('image_provider'): missing.append('image_provider')
                 if t['mode']=='automatic' and (not visual_available(self.settings) or not self.settings.get('host',{}).get('visual_verification_ref')): missing.append('host.visual_capability及真实视觉能力证明')
             if missing: raise ValueError('仅需补齐：'+', '.join(missing))
@@ -421,7 +424,8 @@ class Engine:
             plans=a['results']['IMAGE_PLANNING']['images'];pending=[x for x in plans if x['image_id'] not in a['images']]
             if not pending: self._advance(t);return self._save(t)
             p=pending[0];attempts=[r for r in t['requests'] if r['image_id']==p['image_id']]
-            if len(attempts)>=limits.get('max_generation_attempts_per_image',3) or len(t['requests'])>=limits['max_image_requests_per_task']:
+            request_cap=limits.get('max_image_requests_per_task')
+            if len(attempts)>=limits.get('max_generation_attempts_per_image',3) or (request_cap is not None and len(t['requests'])>=request_cap):
                 t['resume_state']=t['state'];t['state']='PAUSED';t['error']='已达到含首次的尝试/调用上限';return self._save(t)
             config=self.settings['image_provider'];pricing=self.settings.get('image_pricing',{});price=pricing.get('price_per_request');max_cost=limits.get('max_cost')
             if max_cost is not None and (not pricing.get('verified_source') or not isinstance(price,(int,float)) or price<0 or pricing.get('currency')!=limits.get('currency') or (len(t['requests'])+1)*price>max_cost):

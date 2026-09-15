@@ -16,14 +16,20 @@ def test_configuration_removes_legacy_length_and_keeps_task_length_choice():
     assert start['choices']['article_type']==['short','long']
 
 
-def test_api_requirements_are_conditional_and_technical_fields_are_agent_owned():
+def test_api_requirements_are_conditional_and_technical_fields_are_agent_owned(monkeypatch):
+    monkeypatch.delenv('GEO_IMAGE_API_KEY',raising=False)
+    monkeypatch.delenv('GEO_TEXT_API_KEY',raising=False)
     form=form_for('配置任务',{})
     shown={field for section in form['sections'] for field in section['fields']}
-    assert set(form['missing'])=={'chat','product_info','reference_images','product_images','output_root','rule_import_sources'}
+    assert set(form['missing'])=={'chat','product_info','reference_images','product_images','output_root'}
     assert {'provider','supports_references','text_adapter','text_endpoint'}<=set(form['agent_fields'])
     assert not shown.intersection(form['agent_fields'])
-    assert 'base_url' in form['conditional_missing']['with_images']
-    assert 'text_base_url' in form['conditional_missing']['text_api']
+    assert form['conditional_missing']['with_images']==['model','image_api_key']
+    assert form['conditional_missing']['text_api']==['text_model','text_api_key']
+    assert next(s for s in form['sections'] if s['id']=='image_api')['fields']==['model','image_api_key','max_requests']
+    assert next(s for s in form['sections'] if s['id']=='text_api')['fields']==['text_model','text_api_key','text_max_requests_per_task']
+    assert 'rule_import_sources' not in form['values']
+    assert 'image_text_policy' not in shown and 'product' not in next(s for s in form['sections'] if s['id']=='image_api')['fields']
     assert form['persistence']['can_save_partial'] is True
 
 
@@ -78,6 +84,12 @@ def test_cli_text_form_is_ready_to_display_without_internal_field_names(tmp_path
     assert '文章篇幅' not in message
     assert '适配器：' not in message
     assert '是否支持参考图：' not in message
+    assert '完整禁限规则' not in message
+    assert '- API地址：' not in message and '- 图片服务商名称' not in message and '- 文字服务商名称' not in message
+    assert '- 官方文档' not in message
+    assert '图中文字' not in message
+    assert message.count('API Key：')==2
+    assert message.count('可选，可留空')==2
     assert '图片API' in message and '第三方文字API' in message
     assert '未保存' in message and '本地' in message
 
@@ -94,3 +106,9 @@ def test_form_and_save_checks_do_not_send_requests_or_disclose_credentials(tmp_p
     assert code==0 and result['configuration']['checks']['paid_request_sent'] is False
     assert 'private-local-secret' not in json.dumps(result)
     assert result['configuration']['checks']['credentials']['image_api']['connected'] is True
+
+
+def test_api_key_is_never_accepted_as_form_json():
+    import pytest
+    with pytest.raises(ValueError):
+        form_for('配置任务',{}, {'image_api_key':'private-value'})

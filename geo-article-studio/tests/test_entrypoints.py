@@ -21,13 +21,14 @@ def test_start_uses_correct_product_and_asks_mode():
     assert form['values']['mode'] is None and 'mode' in form['missing']
     assert form['choices']['mode']==['learning','automatic']
 
-def test_configuration_includes_api_and_libraries_in_one_form():
+def test_configuration_includes_api_and_libraries_in_one_form(monkeypatch):
+    monkeypatch.delenv('GEO_IMAGE_API_KEY',raising=False)
+    monkeypatch.delenv('GEO_TEXT_API_KEY',raising=False)
     form=form_for('配置任务',copy.deepcopy(DEFAULT_SETTINGS))
     assert form['action']=='configure_task'
-    for key in ('chat','product_info','reference_images','product_images','output_root','rule_import_sources'):
+    for key in ('chat','product_info','reference_images','product_images','output_root'):
         assert key in form['missing']
-    for key in ('provider','base_url','protocol_document','model','dimensions','max_requests'):
-        assert key in form['conditional_missing']['with_images']
+    assert form['conditional_missing']['with_images']==['model','image_api_key']
     assert form['values']['api_key_env']=='GEO_IMAGE_API_KEY'
     assert 'api_key' not in form['values']
     assert any(s['id']=='image_api' for s in form['sections'])

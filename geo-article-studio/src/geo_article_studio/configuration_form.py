@@ -9,7 +9,6 @@ FIELDS={
     'product':('default_product_name',DEFAULT_SETTINGS['default_product_name'],'产品名称'),
     **{key:('libraries.'+key,None,label) for key,label in [('chat','聊天库路径'),('product_info','产品信息库路径'),('reference_images','参考图库路径'),('product_images','产品图库路径')]},
     'output_root':('output_root',None,'成品保存目录'),
-    'rule_import_sources':('rule_import_sources',None,'完整禁限规则文件'),
     'image_service':('service_labels.image',None,'图片服务商名称（可选）'),
     'base_url':('image_provider.base_url',None,'图片API地址'),
     'model':('image_provider.model',None,'图片模型'),
@@ -22,7 +21,7 @@ FIELDS={
     'dimensions':('defaults.image_dimensions',None,'已确认图片尺寸'),
     'image_ratio':('defaults.image_ratio',None,'已确认图片比例'),
     'image_format':('defaults.image_format','png','图片格式'),
-    'image_text_policy':('defaults.image_text_policy',None,'图中文字：不加文字 / 指定少量文字'),
+    'image_text_policy':('defaults.image_text_policy','auto','图中文字自动策略'),
     'max_attempts':('limits.max_generation_attempts_per_image',3,'单图尝试上限（含首次）'),
     'max_requests':('limits.max_image_requests_per_task',None,'每任务图片调用上限（含重试，可稍后确认）'),
     'text_service':('service_labels.text',None,'文字服务商名称（可选）'),
@@ -33,10 +32,11 @@ FIELDS={
         ('protocol_document',None,'接口文档链接或本地文件（有则提供）'),
         ('max_requests_per_task',None,'每任务文字调用上限（含重试，可稍后确认）')]},
 }
-BASE=['product','chat','product_info','reference_images','product_images','output_root','rule_import_sources']
-IMAGE=['base_url','model','protocol_document','provider','supports_references','max_reference_images','output_formats','api_key_env','dimensions','image_ratio','image_format','image_text_policy','max_attempts','max_requests']
-TEXT=['text_base_url','text_model','text_protocol_document','text_adapter','text_api_key_env','text_max_requests_per_task']
+BASE=['product','chat','product_info','reference_images','product_images','output_root']
+IMAGE=['model']
+TEXT=['text_model']
 AGENT=['provider','supports_references','max_reference_images','output_formats','text_adapter','text_endpoint']
+VIRTUAL_LABELS={'image_api_key':'API Key','text_api_key':'API Key'}
 
 def empty(value):
     return value is None or value==[] or (isinstance(value,str) and not value.strip())
@@ -76,24 +76,32 @@ def configuration_form(settings,provided=None,*,config_path=None,persisted=None)
         value=provided[key] if key in provided else saved if not empty(saved) else default
         values[key]=copy.deepcopy(value)
         states[key]='missing' if empty(value) else 'provided' if key in provided else 'saved' if loaded and not empty(saved) else 'default'
+    image_key=not result_key_missing(settings,'image_provider','GEO_IMAGE_API_KEY')
+    text_key=not result_key_missing(settings,'text_provider','GEO_TEXT_API_KEY')
     sections=[
         {'id':'product','title':'产品','fields':['product']},
         {'id':'libraries','title':'四库与保存位置（基础配置，可分次保存）','fields':BASE[1:]},
-        {'id':'image_api','title':'图片API（有图任务才需完成）','fields':['image_service','base_url','model','protocol_document','image_text_policy','max_requests']},
-        {'id':'text_api','title':'第三方文字API（可选；选择第三方模型时才需完成）','fields':['text_service','text_base_url','text_model','text_protocol_document','text_max_requests_per_task']},
+        {'id':'image_api','title':'图片API（有图任务才需完成）','fields':['model','image_api_key','max_requests']},
+        {'id':'text_api','title':'第三方文字API（可选；选择第三方模型时才需完成）','fields':['text_model','text_api_key','text_max_requests_per_task']},
     ]
     result={'action':'configure_task','values':values,'field_states':states,
             'missing':[k for k in BASE if empty(values[k])],
-            'conditional_missing':{'with_images':[k for k in IMAGE if empty(values[k])],'text_api':[k for k in TEXT if empty(values[k])]},
+            'conditional_missing':{'with_images':[k for k in IMAGE if empty(values[k])]+([] if image_key else ['image_api_key']),
+                                   'text_api':[k for k in TEXT if empty(values[k])]+([] if text_key else ['text_api_key'])},
             'sections':sections,'agent_fields':AGENT.copy(),'choices':{},
             'persistence':{'saved_config_loaded':loaded,'config_path':config_path,'can_save_partial':True,'merge_updates':True},
-            'recommendations':{'orientation':'landscape','dimensions':'依据实际接口文档提供横版选项，用户确认后保存；不猜尺寸，不覆盖已确认规格'},
+            'recommendations':{'orientation':'landscape','dimensions':'Agent依据实际接口支持自动选择适合文章的横版规格；不猜尺寸，不覆盖已核实规格'},
             'checks':local_checks(settings),
-            'credential_notice':'密钥只在本地环境变量或当前Agent已有的安全凭据中设置，不发到聊天；这里只保存变量名。',
-            'technical_notice':'Agent依据实际服务文档核对适配器、接口路径、参考图能力、格式和尺寸；缺文档时先保存资料并查找官方文档，无法确认再说明缺项。不能猜测兼容性或发收费探测请求。',
+            'credential_notice':'API Key通过本地隐藏输入自动配置，不写入普通JSON、不在输出中回显。',
+            'technical_notice':'Agent根据模型名称查找官方文档并自动补齐地址、适配器、接口路径、参考图能力、格式和尺寸；无法唯一识别或协议不受支持时明确报告，不能猜测或发收费探测请求。',
             'text_notice':'配置跨任务保存；每次开始任务仍由用户选择当前Agent默认模型或第三方文字API。'}
     result['message']=render_configuration(result)
     return result
+
+def result_key_missing(settings,key,default):
+    config=settings.get(key) or {}
+    name=config.get('api_key_env',default) if isinstance(config,dict) else default
+    return not (isinstance(name,str) and os.environ.get(name))
 
 def render_configuration(form):
     values=form['values'];states=form['field_states'];p=form['persistence']
@@ -103,20 +111,26 @@ def render_configuration(form):
     for section in form['sections']:
         lines+=['','### '+section['title'],'']
         for key in section['fields']:
+            if key in VIRTUAL_LABELS:
+                kind='image_api' if key=='image_api_key' else 'text_api'
+                credential=form['checks']['credentials'][kind]
+                lines.append('- API Key：'+('已接入当前进程（不显示值）' if credential['connected'] else '未配置；提供模型名称后通过本地隐藏输入自动配置'))
+                continue
             value=values[key]
             rendered='未填写' if empty(value) else json.dumps(value,ensure_ascii=False) if isinstance(value,(list,dict)) else str(value)
             state_label=status[states[key]]
             if empty(value) and key in ('image_service','text_service'):state_label='可选，无需补填'
             if empty(value) and key in ('protocol_document','text_protocol_document'):state_label='Agent根据服务信息查找核对'
+            if empty(value) and key in ('max_requests','text_max_requests_per_task'):state_label='可选，可留空'
             lines.append('- '+FIELDS[key][2]+'：'+rendered+'（'+state_label+'）')
     specs=[]
     for key in ('dimensions','image_ratio','image_format','max_attempts'):
         if not empty(values[key]):specs.append(FIELDS[key][2]+'：'+str(values[key])+'（'+status[states[key]]+'）')
-    lines+=['','图片优先横版，尺寸按接口支持情况提供选项后确认；现有规格保持不变。']
+    lines+=['','图片优先横版；Agent按接口真实支持范围和文章内容自动选择规格。']
     if specs:lines.append('；'.join(specs)+'。')
-    lines+=['','图片凭据变量：'+str(values['api_key_env'])+'；文字凭据变量：'+str(values['text_api_key_env'])+'。',
-            form['credential_notice'],form['technical_notice'],
-            '零图任务不要求图片API齐备；用当前Agent默认模型无需第三方文字API。篇幅在“开始任务”中选择短篇600–800字或普通长文至少1000字。',
+    lines+=['',form['credential_notice'],form['technical_notice'],
+            '图片中的少量文字及是否展示产品，由Agent根据文章标题、正文与已批准产品资料决定；用户无需预先配置。',
+            '图片和文字任务调用上限均可留空；确定任务规模后再估算和确认。零图任务不要求图片API齐备；用当前Agent默认模型无需第三方文字API。篇幅在“开始任务”中选择短篇600–800字或普通长文至少1000字。',
             '本表只做本地检查，不发送API请求，不产生调用费用。']
     if p['saved_config_loaded']:
         lines+=['','本地检查：']

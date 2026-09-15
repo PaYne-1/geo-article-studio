@@ -58,9 +58,11 @@ class TextProvider:
         key=c.get('api_key_env')
         if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',key):errors.append('invalid_key_env')
         elif c.get('auth_type','bearer')=='bearer' and not os.environ.get(key):errors.append('missing_api_key')
-        for key,default in [('max_requests_per_task',None),('max_tokens',4096),('max_response_bytes',2*1024*1024),('max_input_bytes',256*1024)]:
+        for key,default in [('max_tokens',4096),('max_response_bytes',2*1024*1024),('max_input_bytes',256*1024)]:
             value=c.get(key,default)
             if type(value) is not int or value<=0:errors.append('invalid_'+key)
+        cap=c.get('max_requests_per_task')
+        if cap is not None and (type(cap) is not int or cap<=0):errors.append('invalid_max_requests_per_task')
         timeout=c.get('timeout_seconds',120)
         if isinstance(timeout,bool) or not isinstance(timeout,(int,float)) or not math.isfinite(timeout) or timeout<=0:errors.append('invalid_timeout')
         return {'ok':not errors,'errors':errors,'network_verified':False,'paid_request_sent':False}
@@ -101,7 +103,8 @@ def run_text(engine,tid):
                 receipt.update(action_id=action['action_id'],revision=action['expected_revision'])
                 atomic_json(engine._path(tid)/'state.json',t)
             if not receipt:
-                if len(requests)>=provider.config['max_requests_per_task']:raise ValueError('文字API任务请求次数已达上限')
+                cap=provider.config.get('max_requests_per_task')
+                if cap is not None and len(requests)>=cap:raise ValueError('文字API任务请求次数已达上限')
                 receipt={'request_id':uuid.uuid4().hex,'action_id':action['action_id'],'revision':action['expected_revision'],'input_hash':input_hash,'stage':action['stage'],'status':'IN_FLIGHT','created_at':now()}
                 requests.append(receipt);atomic_json(engine._path(tid)/'state.json',t)
         if receipt['status']!='RECEIVED':

@@ -11,7 +11,7 @@
   "defaults": {
     "language": "zh-CN", "mode": null,
     "image_ratio": null, "image_dimensions": null, "image_format": "png",
-    "image_text_policy": null, "image_count_includes_cover": true
+    "image_text_policy": "auto", "image_count_includes_cover": true
   },
   "limits": {
     "max_generation_attempts_per_image": 3,

@@ -25,6 +25,7 @@ def parser():
         if user:c.add_argument('--user-ref',required=True)
         return c
     c=command('form');c.add_argument('trigger');c.add_argument('--file',type=Path);c.add_argument('--format',choices=['json','text'],default='json')
+    c=command('configure-api');c.add_argument('--kind',choices=['image','text'],required=True);c.add_argument('--model',required=True)
     c=command('host-check');c.add_argument('--file',type=Path);c.add_argument('--stage',choices=HOST_STAGES,default='PREFLIGHT');c.add_argument('--mode',choices=['automatic','learning'],default='automatic');c.add_argument('--with-images',action='store_true')
     command('configure',file=True);command('doctor');command('index')
     c=command('search');c.add_argument('query');c.add_argument('--library',choices=list(DEFAULT_SETTINGS['libraries']));c.add_argument('--product-id');c.add_argument('--limit',type=int,default=10)
@@ -55,6 +56,9 @@ def doctor(settings):
         try: report['rules']={'ready':True,'version':RuleStore(settings['workspace_root']).snapshot('doctor')['version']}
         except ValueError as e:report['rules']['reason']=str(e)
     report['text_provider']=TextProvider(settings.get('text_provider')).check()
+    resolution=settings.get('api_resolution') or {}
+    report['api_resolution']={kind:{'status':record.get('status'),'model':record.get('model')}
+                              for kind,record in resolution.items() if kind in ('image','text') and isinstance(record,dict)}
     if settings.get('image_provider'):
         try:report['image_provider']=ImageProvider(settings['image_provider']).check()
         except (ValueError,ProviderError):report['image_provider']['reason']='图片接口尚未完成非付费配置检查'
@@ -63,6 +67,8 @@ def doctor(settings):
     return report
 
 def run(args):
+    from .credentials import hydrate_known_environment
+    hydrate_known_environment()
     if args.command=='host-check':
         config=read_json(args.file) if args.file else load_settings(args.config) if args.config.is_file() else {}
         result=assess_host(config,stage=args.stage,mode=args.mode,has_images=args.with_images)
@@ -78,6 +84,26 @@ def run(args):
             if result['action']!='configure_task':raise ValueError('text格式用于配置任务；开始任务请读取JSON选项')
             return result['message'],0
         return result,0
+    if args.command=='configure-api':
+        from .credentials import configure
+        incoming=load_settings(args.config) if args.config.is_file() else copy.deepcopy(DEFAULT_SETTINGS)
+        credential=configure(args.kind,args.model)
+        provider_key='image_provider' if args.kind=='image' else 'text_provider'
+        existing=incoming.get(provider_key) if isinstance(incoming.get(provider_key),dict) else {}
+        same_model=existing.get('model')==credential['model']
+        if same_model:
+            incoming[provider_key]={**existing,'api_key_env':credential['environment']}
+            record=(incoming.get('api_resolution') or {}).get(args.kind)
+            technical_status=record.get('status') if isinstance(record,dict) else 'existing_configuration_preserved'
+        else:
+            incoming[provider_key]={'model':credential['model'],'api_key_env':credential['environment']}
+            incoming.setdefault('api_resolution',{})[args.kind]={'model':credential['model'],'status':'pending_agent_resolution'}
+            technical_status='pending_agent_resolution'
+        config=validate_settings(incoming)
+        atomic_json(args.config,config)
+        return {'saved':str(args.config.resolve()),'kind':args.kind,'model':credential['model'],
+                'credential':{k:credential[k] for k in ('environment','connected','storage')},
+                'technical_configuration':technical_status,'paid_request_sent':False},0
     if args.command=='configure':
         incoming=read_json(args.file)
         if args.config.is_file():
@@ -85,6 +111,15 @@ def run(args):
             incoming=_merge(load_settings(args.config),incoming)
         if incoming.get('workspace_root') is None:incoming['workspace_root']=str(args.config.resolve().parent/'work')
         config=validate_settings(incoming)
+        resolution=config.get('api_resolution') or {}
+        for kind,provider_cls,provider_key in (('image',ImageProvider,'image_provider'),('text',TextProvider,'text_provider')):
+            record=resolution.get(kind)
+            provider=config.get(provider_key)
+            if not record or record.get('status')!='pending_agent_resolution' or not provider or record.get('model')!=provider.get('model'):
+                continue
+            locally_complete=provider_cls(provider).check()['ok']
+            if kind=='image':locally_complete=locally_complete and bool(config.get('image_protocol_verification'))
+            if locally_complete:record['status']='resolved_local'
         # Reject placing settings within any source library before writing.
         for root in config['libraries'].values():
             if root and args.config.resolve().is_relative_to(Path(root).resolve()):raise ValueError('普通配置不能写入源资料库')
