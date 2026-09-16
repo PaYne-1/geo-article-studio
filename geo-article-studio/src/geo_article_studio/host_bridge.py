@@ -65,6 +65,15 @@ SCHEMAS={
 SCHEMAS['PLANNING']['properties']['geo']=PLAN_SCHEMA
 SCHEMAS['WRITING']['properties']['geo']=DRAFT_SCHEMA
 SCHEMAS['IMAGE_PLANNING']['properties']['images']['items']['properties'].update(role={'enum':['cover','content_summary','real_scene','product_summary']},layout={'enum':['single']})
+SCHEMAS['IMAGE_PLANNING']['properties']['images']['items']['properties'].update(
+    render_mode={'enum':['reference_edit','background_composite']},
+    background_prompt=S,
+    product_placement={'enum':['lower_left','lower_center','lower_right']},
+    product_width_fraction={'type':'number','minimum':.2,'maximum':.9},
+    product_bottom_margin={'type':'integer','minimum':0,'maximum':512},
+    product_source_label=S,
+    perspective_strategy=S,
+    lighting_strategy=S)
 for stage in ('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW'):SCHEMAS[stage]=REVIEW
 
 def validate_result(stage,result):

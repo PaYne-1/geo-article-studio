@@ -72,6 +72,13 @@ def test_four_images_require_independent_ordered_roles():
     value['images'][1].update(layout='single',show_product=False,product_image_ids=[])
     with pytest.raises(ValueError,match='产品'):validate_images(value,4)
 
+def test_image_prompt_names_actual_product_and_preserves_scene_perspective():
+    from geo_article_studio.editorial import validate_image_prompt
+    valid='使用产品图折叠_i12.png生成，保持产品不变，并让产品符合场景透视，与场景完成光影融合。'
+    validate_image_prompt(valid,'折叠_i12.png','选择匹配角度，按地面接触点等比放置','匹配主光方向、色温、环境光和接触阴影')
+    for invalid in ('保持产品不变并符合场景透视，与场景光影融合。','使用产品图折叠_i12.png生成并符合场景透视，与场景光影融合。','使用产品图折叠_i12.png生成，保持产品不变，与场景光影融合。','使用产品图折叠_i12.png生成，保持产品不变并符合场景透视。'):
+        with pytest.raises(ValueError):validate_image_prompt(invalid,'折叠_i12.png','匹配场景','匹配光线')
+
 @pytest.fixture
 def current_engine(tmp_path):
     """New production Engine, actual file/rule persistence and explicit fictional evidence."""
@@ -306,7 +313,7 @@ def test_new_four_image_flow_downloads_and_exports_independent_files(current_eng
     from pathlib import Path
     from PIL import Image
     e=current_engine
-    server['image_size']=(24,32)
+    server['image_size']=(24,24)
     monkeypatch.setenv('GEO_TEST_KEY','offline-fixture')
     e.settings.update(image_provider=config(server),reference_fallback={'user_ref':'test:user:no-reference'},host={'visual_capability':True,'visual_verification_ref':'SIMULATED_ONLY'})
     e.settings['defaults'].update(image_dimensions=[24,32],image_ratio='3:4',image_format='png',image_text_policy='none')
@@ -316,11 +323,14 @@ def test_new_four_image_flow_downloads_and_exports_independent_files(current_eng
     for stage in ('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW'):submit(e,tid,good_review(stage))
     aid=e.status(tid)['articles'][0]['article_id']
     roles=['cover','content_summary','real_scene','product_summary']
-    images=[{'image_id':f'{aid}_I{i:02d}','article_id':aid,'paragraph':i,'purpose':'虚构流程测试','scene':'产品自然出现的中性示意场景','people_actions':'','show_product':True,'product_image_ids':['PI1'],'reference_image_ids':[],'borrow':[],'immutable':['product_structure'],'allowed_text':'','prompt':'3:4竖版独立测试图，展示产品，无文字','fact_ids':[],'role':role,'layout':'single'} for i,role in enumerate(roles,1)]
+    images=[{'image_id':f'{aid}_I{i:02d}','article_id':aid,'paragraph':i,'purpose':'虚构流程测试','scene':'产品自然出现的中性示意场景','people_actions':'','show_product':True,'product_image_ids':['PI1'],'reference_image_ids':[],'borrow':[],'immutable':['product_structure'],'allowed_text':'','prompt':'使用产品图product.png生成，保持产品不变并让产品符合场景透视，与场景完成光影融合；3:4竖版独立测试图，无文字','product_source_label':'product.png','perspective_strategy':'使用匹配视角并按地面接触点等比放置','lighting_strategy':'匹配主光方向和色温，补充环境光与接触阴影','fact_ids':[],'role':role,'layout':'single'} for i,role in enumerate(roles,1)]
     invalid=copy.deepcopy(images);invalid[1]['role']='cover'
     with pytest.raises(ValueError):submit(e,tid,{'images':invalid})
     submit(e,tid,{'images':images})
     for _ in range(4):e.run_image(tid)
+    generated=e.status(tid)['articles'][0]['images']
+    assert all(row['normalization']['method']=='contain_pad' for row in generated.values())
+    assert all(row['normalization']['original_dimensions']==[24,24] for row in generated.values())
     for stage in ('IMAGE_REVIEW','FINAL_REVIEW'):
         assert e.next_action(tid)['stage']==stage
         result=good_review(stage);result['viewed_image_ids']=[p['image_id'] for p in images]

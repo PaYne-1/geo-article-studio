@@ -97,6 +97,52 @@ def test_generation_without_references(server, tmp_path, monkeypatch):
     assert json.loads(server['requests'][0][2])['size'] == '32x24'
 
 
+def test_provider_preserves_full_mismatched_image_and_pads_to_requested_dimensions(server, tmp_path, monkeypatch):
+    Provider, _, validate = api(); monkeypatch.setenv('GEO_TEST_KEY', 'secret-key')
+    server['image_size'] = (20, 32)
+    target = tmp_path/'normalized.png'
+    result = Provider(config(server)).generate(
+        'test', [], target, dimensions=[32,24], image_format='png', request_id='normalize-1')
+    assert validate(target, [32,24], 'png')['width'] == 32
+    assert result['normalization'] == {
+        'method': 'contain_pad',
+        'original_dimensions': [20,32],
+        'output_dimensions': [32,24],
+        'padding_color': [245,245,245],
+    }
+    with Image.open(target) as picture:
+        assert picture.getpixel((16,12)) == (0,128,0)
+        assert picture.getpixel((0,0)) == (245,245,245)
+
+
+def test_composite_product_uses_real_transparent_pixels_and_keeps_background(tmp_path):
+    from geo_article_studio.images import composite_product
+    background = tmp_path / 'background.png'
+    product = tmp_path / 'product.png'
+    output = tmp_path / 'composite.png'
+    Image.new('RGB', (100, 100), 'blue').save(background)
+    cutout = Image.new('RGBA', (40, 40), (0, 0, 0, 5))
+    for x in range(10, 30):
+        for y in range(5, 35):
+            cutout.putpixel((x, y), (220, 10, 20, 255))
+    cutout.save(product)
+
+    result = composite_product(
+        background, product, output,
+        placement='lower_center', width_fraction=.3, bottom_margin=15)
+
+    assert result['method'] == 'approved_product_alpha_composite'
+    assert result['source_bbox'] == [10, 5, 30, 35]
+    assert result['output_dimensions'] == [100, 100]
+    assert result['light_integration']['method'] == 'bounded_color_match_contact_shadow'
+    with Image.open(output) as image:
+        assert image.size == (100, 100)
+        center=image.getpixel((50, 60))[:3]
+        assert center[0] > center[1] and center[0] > center[2]
+        assert image.getpixel((0, 0))[:3] == (0, 0, 255)
+        assert image.getpixel((50, 88))[2] < 255
+
+
 @pytest.mark.parametrize('mode,code,unknown', [('auth','authentication_failed',False), ('timeout','request_timeout',True), ('corrupt','invalid_image',False)])
 def test_failures_are_sanitized_and_never_retried(server, tmp_path, monkeypatch, mode, code, unknown):
     Provider, Error, _ = api(); monkeypatch.setenv('GEO_TEST_KEY','secret-key'); server['mode']=mode

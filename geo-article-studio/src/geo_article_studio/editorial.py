@@ -20,7 +20,7 @@ STANDARDS={
     'evidence':'论点有可核实事实、参数、数据或真实经验支撑；参数对应体验，不虚构数据、客户评价或案例',
     'brand':'用户问题→使用需求→对应功能→产品案例；品牌作为解决问题的案例，避免硬广、夸大和高频重复',
     'language':'减少模板开场、AI套话和机械重复关键词；禁止为凑字数重复表达',
-    'images':{'recommended_count':[2,4],'four_roles':['cover','content_summary','real_scene','product_summary'],'layout':'每张独立成图，禁止拼图、套图、长条切图','ratio':'宽:高固定3:4竖版','preference':'3:4竖版，现代、真实、自然、生活化、简洁；每张均展示产品并对应正文，图中文字精简','wheelchair':'每张使用当前版本已批准产品图锁定外观；产品清楚可见，Logo、型号及参数与批准资料和正文一致'},
+    'images':{'recommended_count':[2,4],'four_roles':['cover','content_summary','real_scene','product_summary'],'layout':'每张独立成图，禁止拼图、套图、长条切图','ratio':'宽:高固定3:4竖版','preference':'3:4竖版，现代、真实、自然、生活化、简洁；每张均展示产品并对应正文，图中文字精简','wheelchair':'每张使用当前版本已批准产品图锁定外观；提示词写明产品图文件名、保持产品不变、符合场景透视及光影融合；匹配主光、色温、环境光和接触阴影，不得简单贴图；产品清楚可见，Logo、型号及参数与批准资料和正文一致'},
     'reviews':['事实：品牌型号、重量尺寸续航刹车、数据政策及医疗/安全表述来源','GEO：直接回答标题、完整子问题、清晰小标题、便于AI提取、明确总结建议','内容合规：AI套话、重复、广告感、错字、夸大、违规词、版权及图文一致性'],
 }
 
@@ -86,6 +86,15 @@ def validate_images(result,count,*,require_product=True):
     roles=[p.get('role') for p in images]
     if any(r not in STANDARDS['images']['four_roles'] for r in roles):raise ValueError('配图须明确正文用途')
     if count==4 and roles!=STANDARDS['images']['four_roles']:raise ValueError('四图结构须为封面、内容总结、真实场景、产品或总结')
+
+def validate_image_prompt(prompt,product_label,perspective_strategy,lighting_strategy):
+    if not all(isinstance(x,str) and x.strip() for x in (prompt,product_label,perspective_strategy,lighting_strategy)):
+        raise ValueError('配图提示词须写明产品图、场景透视和光影融合策略')
+    if product_label not in prompt:raise ValueError('配图提示词必须写明实际采用的产品图文件名')
+    if '产品不变' not in prompt:raise ValueError('配图提示词必须明确保持产品不变')
+    if '透视' not in prompt:raise ValueError('配图提示词必须明确产品符合场景透视')
+    if '光影' not in prompt or '融合' not in prompt:raise ValueError('配图提示词必须明确产品与场景光影融合')
+    if any(term not in lighting_strategy for term in ('主光','色温','接触阴影')):raise ValueError('光影策略须包含主光方向、色温和接触阴影')
 
 def validate_image_spec(ratio,dimensions):
     if ratio!=REQUIRED_IMAGE_RATIO:raise ValueError('所有配图比例必须为宽:高3:4竖版')

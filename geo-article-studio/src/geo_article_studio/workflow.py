@@ -454,6 +454,15 @@ class Engine:
             if p['article_id']!=a['article_id'] or p['image_id']!=f'{a["article_id"]}_I{i:02d}': raise ValueError('图像ID必须绑定当前文章与顺序')
             if p['paragraph']>len(paragraphs): raise ValueError('图片未绑定真实正文段落')
             if p['show_product'] and not p['product_image_ids']: raise ValueError('展示产品必须有已批准基准图')
+            if p.get('render_mode','reference_edit')=='background_composite':
+                if len(p['product_image_ids'])!=1:raise ValueError('真实产品合成模式必须且只能选择一张产品图')
+                if not p.get('background_prompt'):raise ValueError('真实产品合成模式缺少背景生成描述')
+                if p['reference_image_ids']:raise ValueError('真实产品合成模式不能把参考图发送给背景生成接口')
+            if t.get('editorial_version') and p['show_product'] and p['image_id'] not in a.get('images',{}):
+                source=t['sources'][p['product_image_ids'][0]]
+                label=Path(source.get('location',{}).get('relative_path') or self._source_path(source).name).name
+                if p.get('product_source_label')!=label:raise ValueError('图片计划标注的产品图文件名与实际来源不一致')
+                editorial.validate_image_prompt(p.get('prompt',''),label,p.get('perspective_strategy',''),p.get('lighting_strategy',''))
             if not p['reference_image_ids'] and not self.settings.get('reference_fallback',{}).get('user_ref'): raise ValueError('缺少合适参考图及已批准替代策略')
             if d['image_text_policy']=='none' and p['allowed_text']: raise ValueError('当前图中文字策略禁止文字')
             from .review import normalized
@@ -475,11 +484,16 @@ class Engine:
                     if key=='product_image_ids' and (authorization.get('product_id')!=t['product']['product_id'] or authorization.get('version')!=t['product']['version']): raise ValueError('产品图授权版本与当前产品不符')
                     if key=='reference_image_ids' and not set(p.get('borrow',[])).issubset(set(authorization.get('allow_borrow',[]))): raise ValueError('参考借鉴因素超出已批准范围')
                     if key=='product_image_ids' and not set(authorization.get('immutable',[])).issubset(set(p.get('immutable',[]))): raise ValueError('产品不可改变项未完整纳入图片计划')
-            if p['image_id'] in a['images'] and a['images'][p['image_id']]['plan_hash']!=digest(p):a['images'].pop(p['image_id'])
+            if p['image_id'] in a['images'] and a['images'][p['image_id']]['plan_hash']!=digest(p):
+                invalidated=copy.deepcopy(a['images'][p['image_id']]);old_path=Path(invalidated['path']).resolve()
+                if not old_path.is_relative_to(self._path(t['task_id']).resolve()):raise ValueError('失效图片路径越界')
+                old_path.unlink(missing_ok=True);a['images'].pop(p['image_id'])
+                t['history'].append({'reason':'image_plan_changed','object_id':a['article_id'],
+                                     'image_id':p['image_id'],'invalidated_image':invalidated})
 
     def run_image(self,tid):
         from .images import validate_image
-        from .images import ImageProvider, ProviderError
+        from .images import ImageProvider, ProviderError, composite_product
         with self._lock(tid):
             t=self._load(tid)
             if t['state']!='GENERATING_IMAGES': raise ValueError('当前不允许生成图片')
@@ -494,7 +508,10 @@ class Engine:
             counted=[r for r in t['requests'] if not (r.get('status')=='FAILED' and r.get('error_code')=='output_exists')]
             attempts=[r for r in counted if r['image_id']==p['image_id']]
             request_cap=limits.get('max_image_requests_per_task')
-            if len(attempts)>=limits.get('max_generation_attempts_per_image',3) or (request_cap is not None and len(counted)>=request_cap):
+            retry_allowances=sum(1 for change in t.get('authorization',{}).get('image_cap_changes',[])
+                                 if change.get('image_id')==p['image_id'])
+            attempt_cap=limits.get('max_generation_attempts_per_image',3)+retry_allowances
+            if len(attempts)>=attempt_cap or (request_cap is not None and len(counted)>=request_cap):
                 t['resume_state']=t['state'];t['state']='PAUSED';t['error']='已达到含首次的尝试/调用上限';return self._save(t)
             config=self.settings['image_provider'];pricing=self.settings.get('image_pricing',{});price=pricing.get('price_per_request');max_cost=limits.get('max_cost')
             if max_cost is not None and (not pricing.get('verified_source') or not isinstance(price,(int,float)) or price<0 or pricing.get('currency')!=limits.get('currency') or (len(counted)+1)*price>max_cost):
@@ -502,22 +519,44 @@ class Engine:
             provider=ImageProvider(config)
             if not provider.check().get('ok'):
                 t['resume_state']=t['state'];t['state']='PAUSED';t['error']='图片服务配置/凭据缺失，未发出请求';return self._save(t)
-            paths=[self._source_path(t['sources'][sid]) for sid in p['product_image_ids']+p['reference_image_ids']]
+            composite=p.get('render_mode','reference_edit')=='background_composite'
+            uploaded_ids=[] if composite else p['product_image_ids']+p['reference_image_ids']
+            paths=[self._source_path(t['sources'][sid]) for sid in uploaded_ids]
             rid=uuid.uuid4().hex;dest=self._path(tid)/'images'/a['article_id']/f'v{a["revision"]}'/f'{p["image_id"]}.{d["image_format"]}'
             dest.parent.mkdir(parents=True,exist_ok=True)
-            req={'request_id':rid,'article_id':a['article_id'],'image_id':p['image_id'],'attempt':len(attempts)+1,'status':'IN_FLIGHT','cost':None,'estimated_cost':price,'started_at':now(),'references':p['product_image_ids']+p['reference_image_ids']}
+            req={'request_id':rid,'article_id':a['article_id'],'image_id':p['image_id'],'attempt':len(attempts)+1,'status':'IN_FLIGHT','cost':None,'estimated_cost':price,'started_at':now(),'references':uploaded_ids}
+            if composite:req['local_product_sources']=p['product_image_ids']
             t['requests'].append(req);self._save(t)
+            api_succeeded=False;background=None
             try:
-                result=provider.generate(p['prompt'],paths,dest,dimensions=d['image_dimensions'],image_format=d['image_format'],request_id=rid)
+                target=dest
+                if composite:
+                    background=dest.parent/f'.background-{rid}.{d["image_format"]}'
+                    target=background
+                result=provider.generate(p.get('background_prompt',p['prompt']),paths,target,dimensions=d['image_dimensions'],image_format=d['image_format'],request_id=rid)
+                api_succeeded=True
+                composition=None
+                if composite:
+                    product=self._source_path(t['sources'][p['product_image_ids'][0]])
+                    composition=composite_product(background,product,dest,
+                        placement=p.get('product_placement','lower_center'),
+                        width_fraction=p.get('product_width_fraction',.72),
+                        bottom_margin=p.get('product_bottom_margin',24))
                 verified=validate_image(dest,d['image_dimensions'],d['image_format'])
                 req.update(status='SUCCEEDED',cost=result.get('cost'),finished_at=now())
+                if result.get('normalization'):req['normalization']=copy.deepcopy(result['normalization'])
+                if composition:req['composition']=copy.deepcopy(composition)
                 a['images'][p['image_id']]={'path':str(dest),'hash':file_hash(dest),'validation':verified,'request_id':rid,'body_hash':digest(a['results']['WRITING']),'plan_hash':digest(p)}
+                if result.get('normalization'):a['images'][p['image_id']]['normalization']=copy.deepcopy(result['normalization'])
+                if composition:a['images'][p['image_id']]['composition']=copy.deepcopy(composition)
+                if background:background.unlink(missing_ok=True)
             except ProviderError as e:
                 req['status']='UNKNOWN' if e.status_unknown else 'FAILED';req['error_code']=e.code
                 if e.status_unknown or not e.retryable:
                     t['resume_state']=t['state'];t['state']='PAUSED';t['error']='图片接口阻断：'+str(e.code)
             except (ValueError,OSError):
-                req['status']='UNKNOWN';t['resume_state']=t['state'];t['state']='PAUSED';t['error']='图片落盘/校验异常；核对外部请求后恢复'
+                req['status']='FAILED' if api_succeeded else 'UNKNOWN';req['error_code']='postprocess_failed' if api_succeeded else 'output_state_unknown'
+                t['resume_state']=t['state'];t['state']='PAUSED';t['error']='产品图合成/图片校验失败' if api_succeeded else '图片落盘/校验异常；核对外部请求后恢复'
             if marker.exists() and t['state']!='PAUSED': t['resume_state']=t['state'];t['state']='PAUSED'
             if t['state']=='GENERATING_IMAGES' and len(a['images'])==a['image_count']: self._advance(t)
             return self._save(t)
@@ -535,12 +574,18 @@ class Engine:
         from .images import validate_image
         with self._lock(tid):
             t=self._load(tid);a=self._article(t);r=next((x for x in t['requests'] if x['request_id']==request_id),None)
-            if not r or r['status'] not in ('UNKNOWN','IN_FLIGHT') or r['article_id']!=a['article_id']: raise ValueError('恢复请求与当前文章不匹配')
+            postprocess=bool(r and r.get('status')=='FAILED' and r.get('error_code')=='postprocess_failed')
+            if not r or (r['status'] not in ('UNKNOWN','IN_FLIGHT') and not postprocess) or r['article_id']!=a['article_id']: raise ValueError('恢复请求与当前文章不匹配')
             p=Path(path).resolve(strict=True)
             if not p.is_relative_to(self._path(tid).resolve()): raise ValueError('人工下载结果必须先放到当前任务内部目录')
             d=self.settings['defaults'];v=validate_image(p,d['image_dimensions'],d['image_format']);plan=next(x for x in a['results']['IMAGE_PLANNING']['images'] if x['image_id']==r['image_id'])
             a['images'][r['image_id']]={'path':str(p),'hash':file_hash(p),'validation':v,'request_id':request_id,'body_hash':digest(a['results']['WRITING']),'plan_hash':digest(plan)}
-            r.update(status='SUCCEEDED',resolution_user_ref=user_ref);return self._save(t)
+            previous_error=r.pop('error_code',None)
+            r.update(status='SUCCEEDED',resolution_user_ref=user_ref)
+            if postprocess:r.update(recovery='local_postprocess',previous_error_code=previous_error)
+            if postprocess and len(a['images'])==a['image_count']:
+                t['stage']=t['state']='GENERATING_IMAGES';t.pop('resume_state',None);t['error']=None;self._advance(t)
+            return self._save(t)
 
     def _verify_files(self,t):
         for a in t['articles']:
@@ -653,29 +698,35 @@ class Engine:
         if type(new_cap) is not int or new_cap<1:raise ValueError('新图片调用上限必须为正整数')
         with self._lock(tid):
             t=self._load(tid);a=self._article(t)
-            if t['state']!='PAUSED' or t['stage']!='IMAGE_REVIEW' or not a:
-                raise ValueError('只能为视觉审核失败后暂停的当前文章授权重试')
-            if image_id not in a.get('images',{}):raise ValueError('重试图片ID不属于当前文章')
+            if t['state']!='PAUSED' or t['stage'] not in ('IMAGE_REVIEW','GENERATING_IMAGES') or not a:
+                raise ValueError('只能为视觉审核失败后的当前文章授权重试')
+            pending_after_review=t['stage']=='GENERATING_IMAGES' and image_id not in a.get('images',{}) and any(
+                plan.get('image_id')==image_id for plan in a.get('results',{}).get('IMAGE_PLANNING',{}).get('images',[]))
+            if image_id not in a.get('images',{}) and not pending_after_review:raise ValueError('重试图片ID不属于当前文章')
             if any(r['status'] in ('UNKNOWN','IN_FLIGHT') for r in t.get('requests',[])):
                 raise ValueError('仍有收费状态未知的图片请求，禁止授权重发')
             failed=any(row.get('stage')=='IMAGE_REVIEW' and row.get('object_id')==a['article_id']
-                       and row.get('result',{}).get('verdict')=='failed' for row in t.get('history',[]))
+                       and row.get('result',{}).get('verdict')=='failed'
+                       and image_id in row.get('result',{}).get('viewed_image_ids',[]) for row in t.get('history',[]))
             if not failed:raise ValueError('没有可核验的失败视觉审核记录')
             limits=t.setdefault('authorization',{}).setdefault('limits',{})
             old_cap=limits.get('max_image_requests_per_task')
             if type(old_cap) is not int or new_cap!=old_cap+1 or new_cap<len(t.get('requests',[]))+1:
                 raise ValueError('本操作只允许把当前任务图片上限增加一次调用')
-            old_image=copy.deepcopy(a['images'][image_id])
-            old_path=Path(old_image['path']).resolve()
-            if not old_path.is_relative_to(self._path(tid).resolve()):raise ValueError('失败图片路径越界')
-            old_path.unlink(missing_ok=True)
-            a['images'].pop(image_id)
-            a['previous_image_plan']=copy.deepcopy(a['results'].get('IMAGE_PLANNING'))
+            old_image=copy.deepcopy(a['images'].get(image_id))
+            if old_image:
+                old_path=Path(old_image['path']).resolve()
+                if not old_path.is_relative_to(self._path(tid).resolve()):raise ValueError('失败图片路径越界')
+                old_path.unlink(missing_ok=True);a['images'].pop(image_id)
+                a['previous_image_plan']=copy.deepcopy(a['results'].get('IMAGE_PLANNING'))
             for stage in ('IMAGE_REVIEW','FINAL_REVIEW'):a['results'].pop(stage,None)
             limits['max_image_requests_per_task']=new_cap
             change={'from':old_cap,'to':new_cap,'image_id':image_id,'user_ref':user_ref,'at':now()}
             t['authorization'].setdefault('image_cap_changes',[]).append(change)
-            t['history'].append({'reason':'authorized_image_retry','object_id':a['article_id'],
-                                 'failed_image':old_image,'authorization':copy.deepcopy(change)})
-            t['stage']=t['state']='IMAGE_PLANNING';t.pop('resume_state',None);t['error']=None
+            history={'reason':'authorized_image_retry','object_id':a['article_id'],'image_id':image_id,
+                     'authorization':copy.deepcopy(change)}
+            if old_image:history['failed_image']=old_image
+            t['history'].append(history)
+            t['stage']=t['state']='IMAGE_PLANNING'
+            t.pop('resume_state',None);t['error']=None
             return self._save(t)

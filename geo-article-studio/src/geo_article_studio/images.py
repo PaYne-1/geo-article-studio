@@ -17,7 +17,7 @@ import urllib.parse
 import uuid
 import warnings
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps, ImageStat
 
 
 class ProviderError(RuntimeError):
@@ -61,6 +61,87 @@ def validate_image(path, dimensions=None, image_format=None):
         raise
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning):
         raise ProviderError('invalid_image') from None
+
+
+def normalize_image_canvas(path, dimensions, image_format, padding_color=(245,245,245)):
+    """Preserve the complete returned image and pad it to the requested canvas."""
+    path=Path(path);meta=validate_image(path,image_format=image_format)
+    target=tuple(dimensions)
+    if (meta['width'],meta['height'])==target:return None
+    fmt=image_format.lower().replace('jpg','jpeg')
+    try:
+        with Image.open(path) as source:
+            source.load()
+            contained=ImageOps.contain(source.convert('RGBA'),target,Image.Resampling.LANCZOS)
+        canvas=Image.new('RGBA',target,(*padding_color,255))
+        left=(target[0]-contained.width)//2;top=(target[1]-contained.height)//2
+        canvas.alpha_composite(contained,(left,top))
+        output=canvas.convert('RGB')
+        output.save(path,format={'png':'PNG','jpeg':'JPEG','webp':'WEBP'}[fmt])
+    except (OSError,ValueError,KeyError):raise ProviderError('dimension_normalization_failed') from None
+    return {'method':'contain_pad','original_dimensions':[meta['width'],meta['height']],
+            'output_dimensions':list(dimensions),'padding_color':list(padding_color)}
+
+
+def composite_product(background_path, product_path, output_path, *, placement='lower_center',
+                      width_fraction=.72, bottom_margin=24):
+    """Integrate an approved cutout without generatively altering its structure."""
+    if placement not in {'lower_left','lower_center','lower_right'}:raise ValueError('invalid_product_placement')
+    if not isinstance(width_fraction,(int,float)) or isinstance(width_fraction,bool) or not .2<=width_fraction<=.9:
+        raise ValueError('invalid_product_scale')
+    if type(bottom_margin) is not int or bottom_margin<0:raise ValueError('invalid_product_margin')
+    background_path=Path(background_path);product_path=Path(product_path);output_path=Path(output_path)
+    if output_path.exists() or output_path.is_symlink():raise ValueError('output_exists')
+    with Image.open(background_path) as raw_background, Image.open(product_path) as raw_product:
+        background=raw_background.convert('RGBA')
+        if 'A' not in raw_product.getbands():raise ValueError('product_alpha_required')
+        product=raw_product.convert('RGBA')
+        # Ignore near-transparent export noise when finding the product bounds,
+        # while retaining every original pixel inside the selected rectangle.
+        bbox=product.getchannel('A').point(lambda value:255 if value>=32 else 0).getbbox()
+        if not bbox:raise ValueError('empty_product_alpha')
+        product=product.crop(bbox)
+        max_width=max(1,round(background.width*width_fraction));max_height=max(1,background.height-bottom_margin)
+        ratio=min(max_width/product.width,max_height/product.height)
+        size=(max(1,round(product.width*ratio)),max(1,round(product.height*ratio)))
+        product=product.resize(size,Image.Resampling.LANCZOS)
+        margin=max(0,round(background.width*.035))
+        x={'lower_left':margin,'lower_center':(background.width-product.width)//2,
+           'lower_right':background.width-product.width-margin}[placement]
+        x=max(0,min(x,background.width-product.width));y=max(0,background.height-product.height-bottom_margin)
+        region=background.crop((x,y,x+product.width,y+product.height)).convert('RGB')
+        local_rgb=tuple(round(value) for value in ImageStat.Stat(region).mean[:3])
+        alpha=product.getchannel('A')
+        product_rgb=product.convert('RGB')
+        product_mean=ImageStat.Stat(product_rgb,mask=alpha).mean
+        local_luma=sum(local_rgb)/3;product_luma=max(1,sum(product_mean[:3])/3)
+        brightness=max(.88,min(1.12,local_luma/product_luma))
+        product_rgb=ImageEnhance.Brightness(product_rgb).enhance(brightness)
+        tint=Image.new('RGB',product.size,local_rgb)
+        product_rgb=Image.blend(product_rgb,tint,.06)
+        product=product_rgb.convert('RGBA');product.putalpha(alpha)
+        shadow=Image.new('RGBA',background.size,(0,0,0,0));draw=ImageDraw.Draw(shadow)
+        shadow_box=(x+round(product.width*.06),y+product.height-round(product.height*.045),
+                    x+product.width-round(product.width*.06),min(background.height,y+product.height+round(product.height*.07)))
+        draw.ellipse(shadow_box,fill=(12,12,12,72))
+        shadow=shadow.filter(ImageFilter.GaussianBlur(max(2,round(product.width*.025))))
+        background.alpha_composite(shadow)
+        background.alpha_composite(product,(x,y))
+        output_path.parent.mkdir(parents=True,exist_ok=True)
+        fd,name=tempfile.mkstemp(prefix='.composite-',suffix=output_path.suffix,dir=output_path.parent);temp=Path(name)
+        try:
+            with os.fdopen(fd,'wb') as handle:
+                background.convert('RGB').save(handle,format='PNG' if output_path.suffix.lower()=='.png' else 'JPEG')
+                handle.flush();os.fsync(handle.fileno())
+            os.link(temp,output_path)
+        finally:temp.unlink(missing_ok=True)
+    return {'method':'approved_product_alpha_composite','source_bbox':list(bbox),
+            'output_dimensions':[background.width,background.height],'placement':placement,
+            'width_fraction':width_fraction,'bottom_margin':bottom_margin,
+            'placed_box':[x,y,x+product.width,y+product.height],
+            'light_integration':{'method':'bounded_color_match_contact_shadow','local_rgb':list(local_rgb),
+                                 'brightness_factor':round(brightness,4),'tint_strength':.06,
+                                 'shadow_box':list(shadow_box)}}
 
 
 class ImageProvider:
@@ -260,6 +341,7 @@ class ImageProvider:
         temp=Path(name)
         try:
             with os.fdopen(fd,'wb') as f: f.write(data); f.flush(); os.fsync(f.fileno())
+            normalization=normalize_image_canvas(temp,dimensions,fmt)
             meta=validate_image(temp,dimensions,fmt)
             # link fails if another writer has already produced this file; never overwrite it.
             os.link(temp,output_path)
@@ -268,5 +350,7 @@ class ImageProvider:
         finally: temp.unlink(missing_ok=True)
         usage=result.get('usage')
         safe_usage={k:v for k,v in usage.items() if isinstance(v,(int,float)) and not isinstance(v,bool)} if isinstance(usage,dict) else None
-        return {**meta,'request_id':request_id,'status':'SUCCEEDED','references':references,
+        result={**meta,'request_id':request_id,'status':'SUCCEEDED','references':references,
                 'usage':safe_usage,'cost':None,'cost_status':'unknown','visual_review':'needs_review'}
+        if normalization:result['normalization']=normalization
+        return result

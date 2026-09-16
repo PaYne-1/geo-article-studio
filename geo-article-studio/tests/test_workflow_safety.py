@@ -142,7 +142,7 @@ class LedgerProvider:
         persisted=read_json(self.engine._path(self.tid)/'state.json')
         assert persisted['requests'][-1]['request_id']==request_id
         assert persisted['requests'][-1]['status']=='IN_FLIGHT'
-        self.calls.append({'request_id':request_id,'path':str(path)})
+        self.calls.append({'request_id':request_id,'path':str(path),'refs':[str(x) for x in refs],'prompt':prompt})
         if self.callback: self.callback()
         if self.error: raise self.error
         Image.new('RGB',dimensions,'green').save(path,'PNG')
@@ -154,6 +154,47 @@ def mock_provider(monkeypatch,engine,tid):
     provider=LedgerProvider(engine,tid)
     monkeypatch.setattr(image_module,'ImageProvider',lambda config:provider)
     return provider
+
+
+def test_background_composite_keeps_product_local_and_records_composition(engine,monkeypatch):
+    from PIL import Image
+    from geo_article_studio.storage import file_hash
+    engine.settings['defaults'].update(image_ratio='4:3',image_dimensions=[32,24],image_format='png',image_text_policy='none')
+    engine.settings['limits'].update(max_image_requests_per_task=2,max_generation_attempts_per_image=3)
+    engine.settings['image_provider']={'adapter':'openai_compatible','model':'offline-fixture'}
+    engine.settings['host'].update(visual_capability=True,visual_verification_ref='offline-fixture-only')
+    engine.settings['reference_fallback']={'user_ref':'user:background-only','strategy':'离线测试背景'}
+    product=Path(engine.settings['workspace_root'])/'approved-product.png'
+    cutout=Image.new('RGBA',(20,20),(0,0,0,0))
+    for x in range(3,17):
+        for y in range(2,18):cutout.putpixel((x,y),(220,10,20,255))
+    product.parent.mkdir(parents=True,exist_ok=True);cutout.save(product)
+    digest=file_hash(product)
+    engine.settings['image_authorizations']={'P1':{'user_ref':'user:approved-product','hash':digest,
+        'external_use_approved':True,'product_id':'test-product','version':'test','immutable':[]}}
+    tid=analyze(engine)
+    engine.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[1]}],user_ref='user:selection')
+    submit(engine,tid,{'angle':'收纳准备','question':'如何准备','outline':['准备'],'fact_ids':[],'source_ids':['S1']})
+    submit(engine,tid,{'title':'虚构测试','body':'这是一段虚构离线测试的说明。','claims':[]})
+    submit(engine,tid,good_review('TEXT_REVIEW'))
+    state=engine.status(tid)
+    state['sources']['P1']={'source_id':'P1','library_type':'product_images','product_id':'test-product','hash':digest,'path':str(product),
+        'location':{'absolute_path':str(product),'relative_path':'approved-product.png','line_start':1,'line_end':1},
+        'metadata':{'version':'test','conflict':False,'trust':'untrusted'}}
+    engine._save(state)
+    submit(engine,tid,{'images':[{'image_id':'A001_I01','article_id':'A001','paragraph':1,'purpose':'测试说明',
+        'scene':'纯背景','people_actions':'','show_product':True,'product_image_ids':['P1'],'reference_image_ids':[],
+        'borrow':[],'immutable':[],'allowed_text':'','prompt':'不得使用','background_prompt':'仅生成绿色背景',
+        'render_mode':'background_composite','product_placement':'lower_center','product_width_fraction':.5,
+        'product_bottom_margin':1,'fact_ids':[],'role':'cover','layout':'single'}]})
+    provider=mock_provider(monkeypatch,engine,tid)
+    result=engine.run_image(tid)
+    image=result['articles'][0]['images']['A001_I01']
+    assert provider.calls[0]['refs']==[] and provider.calls[0]['prompt']=='仅生成绿色背景'
+    assert image['composition']['method']=='approved_product_alpha_composite'
+    assert image['composition']['light_integration']['method']=='bounded_color_match_contact_shadow'
+    assert result['requests'][-1]['local_product_sources']==['P1']
+    with Image.open(image['path']) as rendered:assert any(pixel[0]>pixel[1] and pixel[0]>pixel[2] for pixel in rendered.convert('RGB').getdata())
 
 
 def test_provider_preflight_failure_does_not_count_request(engine,monkeypatch):
@@ -292,7 +333,7 @@ def test_single_image_revision_preserves_other_image_and_body(engine,monkeypatch
 def test_authorized_image_retry_raises_only_task_cap_and_preserves_other_image(engine,monkeypatch):
     import copy
     from geo_article_studio.review import REVIEW_CHECKS
-    tid=image_task(engine,count=2,limit_changes={'max_image_requests_per_task':2})
+    tid=image_task(engine,count=2,limit_changes={'max_image_requests_per_task':2,'max_generation_attempts_per_image':1})
     provider=mock_provider(monkeypatch,engine,tid)
     engine.run_image(tid);state=engine.run_image(tid)
     preserved=copy.deepcopy(state['articles'][0]['images']['A001_I01'])
@@ -311,6 +352,53 @@ def test_authorized_image_retry_raises_only_task_cap_and_preserves_other_image(e
     assert state['articles'][0]['images']=={'A001_I01':preserved}
     assert state['authorization']['image_cap_changes'][-1]['image_id']=='A001_I02'
     assert not Path(state['history'][-1]['failed_image']['path']).exists()
+    submit(engine,tid,state['articles'][0]['previous_image_plan'])
+    regenerated=engine.run_image(tid)
+    assert regenerated['state']=='IMAGE_REVIEW'
+    assert len(provider.calls)==3
+
+
+def test_second_failed_image_can_be_authorized_after_replan_invalidates_it(engine,monkeypatch):
+    import copy
+    from geo_article_studio.review import REVIEW_CHECKS
+    tid=image_task(engine,count=2,limit_changes={'max_image_requests_per_task':2,'max_generation_attempts_per_image':1})
+    provider=mock_provider(monkeypatch,engine,tid)
+    engine.run_image(tid);engine.run_image(tid)
+    failed={'verdict':'failed','reviewer':'model','viewed_image_ids':['A001_I01','A001_I02'],
+            'checks':[{'check_id':check,'verdict':'failed' if check=='product_structure' else 'passed',
+                       'severity':'hard' if check=='product_structure' else 'info','evidence':'已实际查看两图',
+                       'suggestion':'重生成失败图' if check=='product_structure' else ''}
+                      for check in REVIEW_CHECKS['IMAGE_REVIEW']]}
+    action=engine.next_action(tid);engine.submit(tid,action['action_id'],action['expected_revision'],failed)
+    state=engine.authorize_image_retry(tid,'A001_I01',3,user_ref='user:first-extra-image')
+    second_old_path=Path(state['articles'][0]['images']['A001_I02']['path'])
+    changed=copy.deepcopy(state['articles'][0]['previous_image_plan'])
+    changed['images'][1]['prompt']='OFFLINE FIXTURE CHANGED AFTER REVIEW'
+    submit(engine,tid,changed)
+    assert not second_old_path.exists()
+    engine.run_image(tid)
+    paused=engine.run_image(tid)
+    assert paused['state']=='PAUSED' and paused['stage']=='GENERATING_IMAGES'
+    resumed=engine.authorize_image_retry(tid,'A001_I02',4,user_ref='user:second-extra-image')
+    assert resumed['state']=='IMAGE_PLANNING'
+    assert resumed['authorization']['limits']['max_image_requests_per_task']==4
+
+
+def test_known_postprocess_failure_can_recover_local_image_without_new_request(engine):
+    from PIL import Image
+    tid=image_task(engine,count=1)
+    state=engine.status(tid);state['state']='PAUSED';state['stage']='GENERATING_IMAGES'
+    request_id='known-postprocess-result'
+    state['requests'].append({'request_id':request_id,'article_id':'A001','image_id':'A001_I01',
+        'attempt':1,'status':'FAILED','error_code':'postprocess_failed'})
+    recovered=engine._path(tid)/'images'/'A001'/'v1'/'recovered.png'
+    recovered.parent.mkdir(parents=True,exist_ok=True);Image.new('RGB',(32,24),'green').save(recovered,'PNG')
+    engine._save(state)
+    result=engine.recover_image(tid,request_id,recovered,user_ref='user:recover-known-result')
+    assert result['state']=='IMAGE_REVIEW'
+    assert result['requests'][-1]['status']=='SUCCEEDED'
+    assert result['requests'][-1]['recovery']=='local_postprocess'
+    assert len(result['requests'])==1
 
 def test_task_parent_symlink_cannot_escape_workspace(engine,tmp_path):
     outside=tmp_path/'outside';outside.mkdir()
