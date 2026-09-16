@@ -8,7 +8,7 @@
   "max_reference_images": null,
   "generation_endpoint": "/images/generations",
   "edit_endpoint": "/images/edits",
-  "edit_image_field": "image[]",
+  "edit_image_field": "image",
   "output_formats": ["png"],
   "response_format": "b64_json",
   "send_response_format": true,

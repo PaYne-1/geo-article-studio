@@ -117,6 +117,9 @@ def image_task(engine, count=1, *, limit_changes=None, pricing=None):
     engine.settings['reference_fallback']={'user_ref':'user:test-diagram-no-reference','strategy':'虚构离线测试的纯说明图，不出现产品'}
     if pricing is not None: engine.settings['image_pricing']=pricing
     tid=analyze(engine)
+    legacy=engine.status(tid)
+    legacy.pop('image_policy_version',None)
+    engine._save(legacy)
     engine.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[count]}],user_ref='user:image-count-and-cap')
     submit(engine,tid,{'angle':'收纳准备','question':'如何准备','outline':['准备'],'fact_ids':[],'source_ids':['S1']})
     submit(engine,tid,{'title':'虚构测试','body':'这是一段虚构离线测试的说明。','claims':[]})
@@ -156,7 +159,7 @@ def mock_provider(monkeypatch,engine,tid):
     return provider
 
 
-def test_background_composite_keeps_product_local_and_records_composition(engine,monkeypatch):
+def test_legacy_background_composite_keeps_product_local_and_records_composition(engine,monkeypatch):
     from PIL import Image
     from geo_article_studio.storage import file_hash
     engine.settings['defaults'].update(image_ratio='4:3',image_dimensions=[32,24],image_format='png',image_text_policy='none')
@@ -173,11 +176,15 @@ def test_background_composite_keeps_product_local_and_records_composition(engine
     engine.settings['image_authorizations']={'P1':{'user_ref':'user:approved-product','hash':digest,
         'external_use_approved':True,'product_id':'test-product','version':'test','immutable':[]}}
     tid=analyze(engine)
+    legacy=engine.status(tid)
+    legacy.pop('image_policy_version',None)
+    engine._save(legacy)
     engine.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[1]}],user_ref='user:selection')
     submit(engine,tid,{'angle':'收纳准备','question':'如何准备','outline':['准备'],'fact_ids':[],'source_ids':['S1']})
     submit(engine,tid,{'title':'虚构测试','body':'这是一段虚构离线测试的说明。','claims':[]})
     submit(engine,tid,good_review('TEXT_REVIEW'))
     state=engine.status(tid)
+    state['editorial_version']='geo-editorial.v2'
     state['sources']['P1']={'source_id':'P1','library_type':'product_images','product_id':'test-product','hash':digest,'path':str(product),
         'location':{'absolute_path':str(product),'relative_path':'approved-product.png','line_start':1,'line_end':1},
         'metadata':{'version':'test','conflict':False,'trust':'untrusted'}}

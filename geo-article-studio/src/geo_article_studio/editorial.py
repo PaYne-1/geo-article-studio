@@ -4,6 +4,7 @@ import re
 import jsonschema
 
 VERSION='geo-editorial.v2'
+IMAGE_POLICY_VERSION='multi-reference.v1'
 REQUIRED_IMAGE_RATIO='3:4'
 REQUIRED_IMAGE_DIMENSION_RATIO=(3,4)
 REVIEW_STAGES=('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW')
@@ -87,14 +88,30 @@ def validate_images(result,count,*,require_product=True):
     if any(r not in STANDARDS['images']['four_roles'] for r in roles):raise ValueError('配图须明确正文用途')
     if count==4 and roles!=STANDARDS['images']['four_roles']:raise ValueError('四图结构须为封面、内容总结、真实场景、产品或总结')
 
-def validate_image_prompt(prompt,product_label,perspective_strategy,lighting_strategy):
-    if not all(isinstance(x,str) and x.strip() for x in (prompt,product_label,perspective_strategy,lighting_strategy)):
-        raise ValueError('配图提示词须写明产品图、场景透视和光影融合策略')
+def validate_image_prompt(prompt,product_label,reference_label,borrow,perspective_strategy,lighting_strategy):
+    if not all(isinstance(x,str) and x.strip() for x in (prompt,product_label,reference_label,perspective_strategy,lighting_strategy)):
+        raise ValueError('配图提示词须写明产品图、参考图、场景透视和光影融合策略')
+    factors=('构图','机位','人物与产品尺度','自然光线','空间层次','生活化风格')
+    if not isinstance(borrow,list) or not borrow or any(x not in factors for x in borrow) or len(set(borrow))!=len(borrow):
+        raise ValueError('参考图借鉴范围必须使用非空标准因素列表')
     if product_label not in prompt:raise ValueError('配图提示词必须写明实际采用的产品图文件名')
+    if reference_label not in prompt:raise ValueError('配图提示词必须写明实际采用的参考图文件名')
+    if '产品图' not in prompt or '只确定产品身份' not in prompt or '参考图' not in prompt or '只借鉴' not in prompt:
+        raise ValueError('配图提示词必须区分产品图与参考图的用途边界')
+    match=re.search(re.escape(reference_label)+r'([^；。\n]*)',prompt)
+    clause=match.group(1) if match else ''
+    aliases={'构图':'构图','机位':'机位','尺度':'人物与产品尺度','光线':'自然光线','空间层次':'空间层次','生活化风格':'生活化风格'}
+    if any(factor not in clause for factor in borrow) or any(token in clause and factor not in borrow for token,factor in aliases.items()):
+        raise ValueError('提示词中的参考图借鉴范围必须与borrow及授权完全一致')
     if '产品不变' not in prompt:raise ValueError('配图提示词必须明确保持产品不变')
     if '透视' not in prompt:raise ValueError('配图提示词必须明确产品符合场景透视')
     if '光影' not in prompt or '融合' not in prompt:raise ValueError('配图提示词必须明确产品与场景光影融合')
-    if any(term not in lighting_strategy for term in ('主光','色温','接触阴影')):raise ValueError('光影策略须包含主光方向、色温和接触阴影')
+    perspective_terms=('统一消失点','相机高度','真实尺度','地面接触','遮挡')
+    if any(term not in perspective_strategy for term in perspective_terms):
+        raise ValueError('透视策略须包含统一消失点、相机高度、真实尺度、地面接触和遮挡关系')
+    lighting_terms=('主光','色温','环境反光','接触阴影','投影','边缘色溢','景深','颗粒')
+    if any(term not in lighting_strategy for term in lighting_terms):
+        raise ValueError('光影策略须包含主光、色温、环境反光、接触阴影、投影、边缘色溢、景深和颗粒')
 
 def validate_image_spec(ratio,dimensions):
     if ratio!=REQUIRED_IMAGE_RATIO:raise ValueError('所有配图比例必须为宽:高3:4竖版')

@@ -84,7 +84,8 @@ def test_real_multipart_and_decode(server, tmp_path, monkeypatch, mode):
     assert endpoint == '/v1/images/edits'
     assert 'multipart/form-data' in headers['Content-Type']
     assert body.count(png()) == 2
-    assert b'image[]' in body
+    assert body.count(b'name="image"') == 2
+    assert b'image[]' not in body
     for _, get_headers, _ in server['requests'][1:]: assert 'Authorization' not in get_headers
     assert p.check()['network_verified'] is False
     assert p.query('req-1')['supported'] is False
@@ -95,6 +96,13 @@ def test_generation_without_references(server, tmp_path, monkeypatch):
     Provider(config(server)).generate('test', [], tmp_path/'图.png', dimensions=[32,24], image_format='png', request_id='r')
     assert server['requests'][0][0] == '/v1/images/generations'
     assert json.loads(server['requests'][0][2])['size'] == '32x24'
+
+
+def test_provider_rejects_legacy_image_array_multipart_field(server,monkeypatch):
+    Provider, _, _ = api();monkeypatch.setenv('GEO_TEST_KEY','fixture'); cfg=config(server);cfg['edit_image_field']='image[]'
+    result=Provider(cfg).check()
+    assert result['ok'] is False
+    assert 'image_field_unsupported' in result['errors']
 
 
 def test_provider_preserves_full_mismatched_image_and_pads_to_requested_dimensions(server, tmp_path, monkeypatch):

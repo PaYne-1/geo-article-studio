@@ -202,7 +202,7 @@ class ImageProvider:
         if isinstance(extra,dict) and set(extra)&{'model','prompt','n','size','image','image[]','response_format','output_format','stream'}:
             errors.append('reserved_extra_parameter')
         if c.get('response_format','b64_json') not in {'b64_json','url'}: errors.append('response_format_unsupported')
-        if c.get('edit_image_field','image[]') not in {'image','image[]'}: errors.append('image_field_unsupported')
+        if c.get('edit_image_field','image') != 'image': errors.append('image_field_unsupported')
         for name, default in [('generation_endpoint','/images/generations'),('edit_endpoint','/images/edits')]:
             value = c.get(name,default)
             if not isinstance(value,str) or not value.startswith('/') or '?' in value or '#' in value or '..' in value or '://' in value:
@@ -316,7 +316,7 @@ class ImageProvider:
             for key,value in payload.items():
                 parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n'.encode()+str(value).encode('utf-8')+b'\r\n')
             for i,(blob,meta) in enumerate(zip(blobs,references)):
-                field=c.get('edit_image_field','image[]')
+                field=c.get('edit_image_field','image')
                 parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="reference_{i+1}.{meta["format"]}"\r\nContent-Type: image/{meta["format"]}\r\n\r\n'.encode()+blob+b'\r\n')
             parts.append(f'--{boundary}--\r\n'.encode())
             body=b''.join(parts); headers['Content-Type']='multipart/form-data; boundary='+boundary

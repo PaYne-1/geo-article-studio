@@ -118,7 +118,7 @@ class Engine:
         tid=uuid.uuid4().hex[:16]
         t={'task_id':tid,'product':product,'mode':mode,'state':'PREFLIGHT','stage':'PREFLIGHT','revision':0,'current_article':0,'articles':[],'topics':[],
            'sources':sources,'facts':facts,'coverage':report,'chat_scope':scope,'extra_requirements':extra_requirements,'results':{},'history':[],'approvals':[],'feedback':[],
-           'requests':[],'editorial_version':editorial.VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
+           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
         with self._lock(tid): return self._save(t)
 
     def _check_action(self,t,aid,revision):
@@ -249,16 +249,21 @@ class Engine:
                 if cap is not None and (type(cap) is not int or cap<num): missing.append('limits.max_image_requests_per_task（已填写时必须覆盖本轮图片数）')
                 provider=self.settings.get('image_provider') or {}
                 if not provider: missing.append('image_provider')
-                elif t.get('editorial_version')==editorial.VERSION and (not provider.get('supports_references') or type(provider.get('max_reference_images')) is not int or provider.get('max_reference_images')<1):
-                    missing.append('图片模型必须支持至少1张产品参考图')
+                elif t.get('image_policy_version')==editorial.IMAGE_POLICY_VERSION and (not provider.get('supports_references') or type(provider.get('max_reference_images')) is not int or provider.get('max_reference_images')<2):
+                    missing.append('图片模型必须支持至少2张输入图（产品图和场景参考图）')
                 product_image_rows=self.index.search('',library_type='product_images',product_id=t['product']['product_id'],limit=100,is_image=True)
-                if t.get('editorial_version')==editorial.VERSION:
+                if t.get('image_policy_version')==editorial.IMAGE_POLICY_VERSION:
                     authorizations=self.settings.get('image_authorizations',{})
                     if not any((auth:=authorizations.get(row['source_id'],{})).get('external_use_approved')
                                and auth.get('user_ref') and auth.get('hash')==row['hash']
                                and auth.get('product_id')==t['product']['product_id']
                                and auth.get('version')==t['product']['version'] for row in product_image_rows):
                         missing.append('当前产品当前版本缺少已批准外传的产品图')
+                    reference_rows=self.index.search('',library_type='reference_images',limit=100,is_image=True)
+                    if not any((auth:=authorizations.get(row['source_id'],{})).get('external_use_approved')
+                               and auth.get('user_ref') and auth.get('hash')==row['hash']
+                               and isinstance(auth.get('allow_borrow'),list) and auth['allow_borrow'] for row in reference_rows):
+                        missing.append('参考图库缺少已批准外传且明确借鉴范围的场景参考图')
                 if t['mode']=='automatic' and (not visual_available(self.settings) or not self.settings.get('host',{}).get('visual_verification_ref')): missing.append('host.visual_capability及真实视觉能力证明')
             if missing: raise ValueError('仅需补齐：'+', '.join(missing))
             t['rules_snapshot']=self.rules.snapshot(t['product']['product_id']);self._check_snapshot(t)
@@ -454,15 +459,26 @@ class Engine:
             if p['article_id']!=a['article_id'] or p['image_id']!=f'{a["article_id"]}_I{i:02d}': raise ValueError('图像ID必须绑定当前文章与顺序')
             if p['paragraph']>len(paragraphs): raise ValueError('图片未绑定真实正文段落')
             if p['show_product'] and not p['product_image_ids']: raise ValueError('展示产品必须有已批准基准图')
+            if t.get('image_policy_version')==editorial.IMAGE_POLICY_VERSION and p['show_product']:
+                if p.get('render_mode','reference_edit')!='reference_edit':
+                    raise ValueError('写实产品场景必须使用产品图与参考图进行生成式融合，禁止背景贴图合成')
+                if len(p['product_image_ids'])!=1:
+                    raise ValueError('写实产品场景必须且只能选择一张产品图')
+                if len(p['reference_image_ids'])!=1:
+                    raise ValueError('写实产品场景必须且只能选择一张场景参考图')
+                if not p.get('borrow'):
+                    raise ValueError('写实产品场景必须声明非空参考图借鉴范围')
             if p.get('render_mode','reference_edit')=='background_composite':
                 if len(p['product_image_ids'])!=1:raise ValueError('真实产品合成模式必须且只能选择一张产品图')
                 if not p.get('background_prompt'):raise ValueError('真实产品合成模式缺少背景生成描述')
                 if p['reference_image_ids']:raise ValueError('真实产品合成模式不能把参考图发送给背景生成接口')
-            if t.get('editorial_version') and p['show_product'] and p['image_id'] not in a.get('images',{}):
+            if t.get('image_policy_version')==editorial.IMAGE_POLICY_VERSION and p['show_product'] and p['image_id'] not in a.get('images',{}):
                 source=t['sources'][p['product_image_ids'][0]]
                 label=Path(source.get('location',{}).get('relative_path') or self._source_path(source).name).name
+                reference=t['sources'][p['reference_image_ids'][0]]
+                reference_label=Path(reference.get('location',{}).get('relative_path') or self._source_path(reference).name).name
                 if p.get('product_source_label')!=label:raise ValueError('图片计划标注的产品图文件名与实际来源不一致')
-                editorial.validate_image_prompt(p.get('prompt',''),label,p.get('perspective_strategy',''),p.get('lighting_strategy',''))
+                editorial.validate_image_prompt(p.get('prompt',''),label,reference_label,p.get('borrow'),p.get('perspective_strategy',''),p.get('lighting_strategy',''))
             if not p['reference_image_ids'] and not self.settings.get('reference_fallback',{}).get('user_ref'): raise ValueError('缺少合适参考图及已批准替代策略')
             if d['image_text_policy']=='none' and p['allowed_text']: raise ValueError('当前图中文字策略禁止文字')
             from .review import normalized
@@ -653,6 +669,7 @@ class Engine:
             t['sources']=self._sources(t['product'],t['chat_scope']);t['facts']=self.products.facts(t['product']['product_id'],approved_only=True)
             t['rules_snapshot']=None;t['articles']=[];t['topics']=[];t['current_article']=0;t['results']={};t['stage']=t['state']='PREFLIGHT';t['config_snapshot']=copy.deepcopy(self.settings);t['error']=None
             t['editorial_version']=editorial.VERSION
+            t['image_policy_version']=editorial.IMAGE_POLICY_VERSION
             # A new delivery root prevents collisions with articles published before refresh.
             t.pop('output_path',None);(self._path(tid)/'pause.json').unlink(missing_ok=True)
             return self._save(t)
