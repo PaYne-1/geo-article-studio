@@ -28,6 +28,17 @@ def execution_config_digest(value):
         stable['text_provider'].pop('timeout_seconds',None)
     return digest(stable)
 
+def reserve_output_root(output,product_name):
+    output=Path(output);output.mkdir(parents=True,exist_ok=True)
+    stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
+    base=f'{stamp}_{safe_name(product_name,32)}'
+    for sequence in range(1,1000):
+        candidate=output/f'{base}_{sequence:03d}'
+        try:candidate.mkdir()
+        except FileExistsError:continue
+        return candidate
+    raise ValueError('同一秒内同产品成品目录序号已用完')
+
 def action_source_ids(task,article,stage):
     """Keep whole-library evidence local once a human has selected a topic."""
     if article is None or stage in ('PREFLIGHT','ANALYZING'):
@@ -118,7 +129,7 @@ class Engine:
         tid=uuid.uuid4().hex[:16]
         t={'task_id':tid,'product':product,'mode':mode,'state':'PREFLIGHT','stage':'PREFLIGHT','revision':0,'current_article':0,'articles':[],'topics':[],
            'sources':sources,'facts':facts,'coverage':report,'chat_scope':scope,'extra_requirements':extra_requirements,'results':{},'history':[],'approvals':[],'feedback':[],
-           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
+           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'image_text_policy_version':editorial.IMAGE_TEXT_POLICY_VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
         with self._lock(tid): return self._save(t)
 
     def _check_action(self,t,aid,revision):
@@ -453,6 +464,17 @@ class Engine:
     def _validate_image_plan(self,t,a,result):
         images=result['images'];d=self.settings['defaults']
         if t.get('editorial_version'):editorial.validate_images(result,a['image_count'],require_product=t.get('editorial_version')==editorial.VERSION)
+        if t.get('image_text_policy_version')==editorial.IMAGE_TEXT_POLICY_VERSION:
+            for p in images:
+                if (t.get('image_policy_version')==editorial.IMAGE_POLICY_VERSION and p.get('show_product')
+                    and len(p.get('product_image_ids',[]))==1 and len(p.get('reference_image_ids',[]))==1
+                    and p['product_image_ids'][0] in t['sources'] and p['reference_image_ids'][0] in t['sources']):
+                    source=t['sources'][p['product_image_ids'][0]];reference=t['sources'][p['reference_image_ids'][0]]
+                    label=Path(source.get('location',{}).get('relative_path') or self._source_path(source).name).name
+                    reference_label=Path(reference.get('location',{}).get('relative_path') or self._source_path(reference).name).name
+                    p['prompt']=editorial.render_image_prompt(p,label,reference_label)
+            draft=a['results']['WRITING']
+            editorial.validate_image_text_plan(images,d['image_text_policy'],draft['title'],draft['body'])
         if len(images)!=a['image_count'] or len({x['image_id'] for x in images})!=len(images): raise ValueError('图片计划数量或ID不正确')
         paragraphs=a['results']['WRITING']['body'].split('\n\n')
         for i,p in enumerate(images,1):
@@ -624,15 +646,15 @@ class Engine:
                     review=a['results'].get(review_stage)
                     if not review or not validate_review(review_stage,review):raise ValueError('GEO三轮独立审核尚未全部通过')
             if not t.get('output_path'):
-                stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f');t['output_path']=str(self.output/f'{stamp}_{safe_name(t["product"]["name"])}_{tid}')
+                t['output_path']=str(reserve_output_root(self.output,t['product']['name']))
+                self._save(t)
             staging=self._path(tid)/'staging'/a['article_id']/f'v{a["revision"]}';staging.mkdir(parents=True,exist_ok=True)
             text=a['results']['WRITING'];(staging/'标题.txt').write_text(text['title'],encoding='utf-8');(staging/'正文.txt').write_text(text['body'],encoding='utf-8')
             for i,plan in enumerate(a['results'].get('IMAGE_PLANNING',{}).get('images',[]),1):
                 im=a['images'][plan['image_id']]
                 if im['body_hash']!=digest(text) or im['plan_hash']!=digest(plan): raise ValueError('正文或图像计划已变化，图片失效')
                 shutil.copyfile(im['path'],staging/f'配图_{i:02d}.{self.settings["defaults"]["image_format"]}')
-            topic=next(x for x in t['topics'] if x['topic_id']==a['topic_id'])
-            destination=Path(t['output_path'])/f'{t["current_article"]+1:03d}_{safe_name(topic["direction"])[:24]}_{safe_name(text["title"])[:32]}'
+            destination=Path(t['output_path'])/f'{t["current_article"]+1:03d}'
             publish_article(staging,destination,a['image_count'])
             a['published_files']={str(p):file_hash(p) for p in destination.iterdir() if p.is_file()};a['output_path']=str(destination);a['status']='published'
             t['current_article']+=1
@@ -670,6 +692,7 @@ class Engine:
             t['rules_snapshot']=None;t['articles']=[];t['topics']=[];t['current_article']=0;t['results']={};t['stage']=t['state']='PREFLIGHT';t['config_snapshot']=copy.deepcopy(self.settings);t['error']=None
             t['editorial_version']=editorial.VERSION
             t['image_policy_version']=editorial.IMAGE_POLICY_VERSION
+            t['image_text_policy_version']=editorial.IMAGE_TEXT_POLICY_VERSION
             # A new delivery root prevents collisions with articles published before refresh.
             t.pop('output_path',None);(self._path(tid)/'pause.json').unlink(missing_ok=True)
             return self._save(t)

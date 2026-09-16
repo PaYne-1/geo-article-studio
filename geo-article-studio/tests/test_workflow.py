@@ -36,6 +36,33 @@ def test_builtin_rules_allow_production_and_custom_import_scope_and_rollback(tmp
     store.rollback(imported_version, 'user:rollback')
     assert proposal['rule_id'] not in {r['rule_id'] for r in store.applicable('test-product',article_id='A001')}
 
+
+def test_builtin_rules_upgrade_migrates_old_hash_and_preserves_custom_rules(tmp_path):
+    from geo_article_studio.learning import RuleStore
+    from geo_article_studio.storage import atomic_json
+    store=RuleStore(tmp_path)
+    old=store._builtin();old['imports'][0]['hash']='0'*64;old['imports'][0]['source_version']='geo-editorial.user-confirmed.v4'
+    old['rules'].append({'rule_id':'CUSTOM','scope':'global','target_id':None,'type':'writing_preference','content':'保留自定义规则','check_method':'人工检查','severity':'medium','status':'active','version':2,'activated_at':'test','user_ref':'user:custom'})
+    atomic_json(store.path,old)
+    upgraded=RuleStore(tmp_path).snapshot('test-product')
+    assert any(r['rule_id']=='CUSTOM' and r['status']=='active' for r in upgraded['rules'])
+    assert upgraded['imports'][0]['source_version']=='geo-editorial.user-confirmed.v5'
+    assert upgraded['version']>old['version']
+
+
+def test_builtin_rules_upgrade_keeps_same_id_user_override_shadowing_builtin(tmp_path):
+    from geo_article_studio.learning import RuleStore
+    from geo_article_studio.storage import atomic_json
+    store=RuleStore(tmp_path);old=store._builtin()
+    builtin=next(r for r in old['rules'] if r['rule_id']=='GEO-TITLE-001');builtin['status']='retired'
+    old['rules'].append(dict(builtin,status='active',content='用户覆盖标题规则',user_ref='user:override',version=2))
+    old['imports'][0]['hash']='0'*64;old['imports'][0]['source_version']='geo-editorial.user-confirmed.v4'
+    atomic_json(store.path,old)
+    upgraded=RuleStore(tmp_path).snapshot('test-product')
+    matches=[r for r in upgraded['rules'] if r['rule_id']=='GEO-TITLE-001']
+    assert sum(r['status']=='active' for r in matches)==1
+    assert next(r for r in matches if r['status']=='active')['user_ref']=='user:override'
+
 def test_dispatch_requires_direct_user_and_missing_only():
     from geo_article_studio.host_bridge import form_for, route
     form=form_for('开始任务', {'default_product_name':'218轻便侠'}, {'mode':'automatic'})

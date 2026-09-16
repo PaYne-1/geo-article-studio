@@ -219,6 +219,7 @@ def _run_mode(root, mode, service, references):
     # This historical simulation intentionally exercises pre-v1.4 task snapshots.
     task.pop('editorial_version', None)
     task.pop('image_policy_version', None)
+    task.pop('image_text_policy_version', None)
     atomic_json(engine._path(task['task_id']) / 'state.json', task)
     task_id = task['task_id']
     trace, revised, selection_calls = [], False, 0

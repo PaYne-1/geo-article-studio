@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime, timezone
 from .storage import atomic_json, read_json, file_hash, task_lock
 
+BUILTIN_USER_REF='builtin:user-confirmed-geo-standards'
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -15,16 +17,43 @@ def require_user(actor, user_ref):
 class RuleStore:
     def __init__(self, root, *, simulation=False):
         self.root=Path(root); self.path=self.root/'rules.json';self.simulation=simulation
+        if self.path.exists() and not simulation:
+            with task_lock(self.root/'rules.lock'):
+                self._migrate_builtin(read_json(self.path))
 
     def _builtin(self):
         source=Path(__file__).with_name('builtin_rules.json')
         incoming=read_json(source)
         rules=[dict(rule,status='active',version=1,activated_at='built-in',
-                    user_ref='builtin:user-confirmed-geo-standards') for rule in incoming['rules']]
+                    user_ref=BUILTIN_USER_REF) for rule in incoming['rules']]
         return {'version':1,'formal':True,'simulation':False,'rules':rules,'history':[],
                 'imports':[{'path':'builtin://geo-editorial-rules','hash':file_hash(source),
                             'source_version':incoming['version'],
-                            'user_ref':'builtin:user-confirmed-geo-standards'}]}
+                            'user_ref':BUILTIN_USER_REF}]}
+
+    def _migrate_builtin(self,data):
+        imports=data.get('imports')
+        if not isinstance(imports,list):return data
+        positions=[i for i,item in enumerate(imports) if item.get('path')=='builtin://geo-editorial-rules']
+        if not positions:return data
+        if len(positions)!=1:raise ValueError('内置规则来源记录重复')
+        fresh=self._builtin();current=fresh['imports'][0];old=imports[positions[0]]
+        if old.get('hash')==current['hash']:return data
+        if old.get('source_version')==current['source_version']:
+            raise ValueError('内置规则校验失败，请重新安装技能')
+        previous={k:copy.deepcopy(v) for k,v in data.items() if k!='history'}
+        custom=[rule for rule in data.get('rules',[]) if rule.get('user_ref')!=BUILTIN_USER_REF]
+        overridden={rule.get('rule_id') for rule in custom if rule.get('status')=='active'}
+        for rule in fresh['rules']:
+            if rule.get('rule_id') in overridden:rule['status']='retired'
+        migrated=copy.deepcopy(data)
+        migrated['rules']=fresh['rules']+custom
+        migrated['imports'][positions[0]]=current
+        migrated['history']=data.get('history',[])+[previous]
+        migrated['version']=data.get('version',0)+1
+        migrated['builtin_migrated_at']=now()
+        atomic_json(self.path,migrated)
+        return migrated
 
     def _load(self):
         if self.path.exists():

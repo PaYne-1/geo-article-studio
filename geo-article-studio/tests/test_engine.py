@@ -1,4 +1,5 @@
 import copy
+import re
 import pytest
 from pathlib import Path
 
@@ -69,11 +70,47 @@ def test_auto_zero_images_full_delivery_and_resume(engine):
     submit(e,tid,good_review('FINAL_REVIEW'))
     path=e.export(tid)
     assert Path(path).is_dir()
+    assert re.fullmatch(r'\d{8}_\d{6}_虚构测试产品_\d{3}',Path(path).name)
+    assert [p.name for p in Path(path).iterdir() if p.is_dir()]==['001']
     assert e.status(tid)['state']=='COMPLETED'
     files=list(Path(path).rglob('*'))
     assert len([x for x in files if x.is_file()])==2
     assert e.export(tid)==path
     assert e.status(tid)['requests']==[]
+
+
+def test_short_output_root_uses_sequence_when_timestamp_and_product_collide(tmp_path,monkeypatch):
+    import geo_article_studio.workflow as workflow
+    from datetime import datetime
+    class FixedDatetime:
+        @classmethod
+        def now(cls):return datetime(2026,9,16,13,15,20)
+    monkeypatch.setattr(workflow,'datetime',FixedDatetime)
+    first=workflow.reserve_output_root(tmp_path,'218轻便侠')
+    second=workflow.reserve_output_root(tmp_path,'218轻便侠')
+    assert first.name=='20260916_131520_218轻便侠_001'
+    assert second.name=='20260916_131520_218轻便侠_002'
+
+
+def test_export_reuses_reserved_root_after_publish_succeeds_but_state_save_is_interrupted(engine,monkeypatch):
+    import geo_article_studio.workflow as workflow
+    e=engine;tid=analyze(e)
+    e.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[0]}],user_ref='user:select')
+    submit(e,tid,{'angle':'收纳准备','question':'如何准备','outline':['准备'],'fact_ids':[],'source_ids':['S1']})
+    submit(e,tid,{'title':'虚构测试','body':'先核对实际空间。','claims':[]})
+    submit(e,tid,good_review('TEXT_REVIEW'));submit(e,tid,good_review('FINAL_REVIEW'))
+    real_publish=workflow.publish_article;calls={'count':0}
+    def interrupted(*args,**kwargs):
+        result=real_publish(*args,**kwargs);calls['count']+=1
+        if calls['count']==1:raise RuntimeError('simulated crash after rename')
+        return result
+    monkeypatch.setattr(workflow,'publish_article',interrupted)
+    with pytest.raises(RuntimeError,match='simulated crash'):
+        e.export(tid)
+    reserved=Path(e.status(tid)['output_path'])
+    assert [p.name for p in reserved.parent.iterdir() if p.is_dir()]==[reserved.name]
+    assert e.export(tid)==str(reserved)
+    assert [p.name for p in reserved.parent.iterdir() if p.is_dir()]==[reserved.name]
 
 def test_learning_revise_keeps_stage_stale_approval_and_restart(engine):
     e=engine;tid=analyze(e,'learning')

@@ -5,6 +5,7 @@ import jsonschema
 
 VERSION='geo-editorial.v2'
 IMAGE_POLICY_VERSION='multi-reference.v1'
+IMAGE_TEXT_POLICY_VERSION='auto-text.v1'
 REQUIRED_IMAGE_RATIO='3:4'
 REQUIRED_IMAGE_DIMENSION_RATIO=(3,4)
 REVIEW_STAGES=('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW')
@@ -21,7 +22,7 @@ STANDARDS={
     'evidence':'论点有可核实事实、参数、数据或真实经验支撑；参数对应体验，不虚构数据、客户评价或案例',
     'brand':'用户问题→使用需求→对应功能→产品案例；品牌作为解决问题的案例，避免硬广、夸大和高频重复',
     'language':'减少模板开场、AI套话和机械重复关键词；禁止为凑字数重复表达',
-    'images':{'recommended_count':[2,4],'four_roles':['cover','content_summary','real_scene','product_summary'],'layout':'每张独立成图，禁止拼图、套图、长条切图','ratio':'宽:高固定3:4竖版','preference':'3:4竖版，现代、真实、自然、生活化、简洁；每张均展示产品并对应正文，图中文字精简','wheelchair':'每张使用当前版本已批准产品图锁定外观；提示词写明产品图文件名、保持产品不变、符合场景透视及光影融合；匹配主光、色温、环境光和接触阴影，不得简单贴图；产品清楚可见，Logo、型号及参数与批准资料和正文一致'},
+    'images':{'recommended_count':[2,4],'four_roles':['cover','content_summary','real_scene','product_summary'],'layout':'每张独立成图，禁止拼图、套图、长条切图','ratio':'宽:高固定3:4竖版','preference':'3:4竖版，现代、真实、自然、生活化、简洁；每张均展示产品并对应正文；自动文字策略下每篇至少一张图加入直接摘自标题或正文的短文案，优先封面或内容总结图，每张最多16个非空白字符和两行','wheelchair':'每张使用当前版本已批准产品图锁定外观；提示词写明产品图文件名、保持产品不变、符合场景透视及光影融合；匹配主光、色温、环境光和接触阴影，不得简单贴图；产品清楚可见，Logo、型号及参数与批准资料和正文一致'},
     'reviews':['事实：品牌型号、重量尺寸续航刹车、数据政策及医疗/安全表述来源','GEO：直接回答标题、完整子问题、清晰小标题、便于AI提取、明确总结建议','内容合规：AI套话、重复、广告感、错字、夸大、违规词、版权及图文一致性'],
 }
 
@@ -87,6 +88,43 @@ def validate_images(result,count,*,require_product=True):
     roles=[p.get('role') for p in images]
     if any(r not in STANDARDS['images']['four_roles'] for r in roles):raise ValueError('配图须明确正文用途')
     if count==4 and roles!=STANDARDS['images']['four_roles']:raise ValueError('四图结构须为封面、内容总结、真实场景、产品或总结')
+
+def validate_image_text_plan(images,policy,title,body):
+    texts=[p.get('allowed_text','').strip() for p in images]
+    if policy=='none':
+        if any(texts):raise ValueError('当前图中文字策略禁止文字')
+        return
+    if policy=='auto' and images and not any(texts):
+        raise ValueError('自动图中文字策略下，每篇至少一张图片应加入少量正文相关文字')
+    for plan,text in zip(images,texts):
+        if not text:continue
+        if len(re.sub(r'\s','',text))>16 or len(text.splitlines())>2:
+            raise ValueError('图片文字最多16个字符、两行')
+        prompt=plan.get('prompt','')
+        canonical=f'只显示文字“{text}”，不要添加其他文字'
+        quoted=re.findall(r'[“「『]([^”」』]+)[”」』]',prompt)+re.findall(r'"([^"]+)"',prompt)
+        remainder=prompt.replace(canonical,'')
+        text_commands=('文字','文案','字体','标语','字幕','显示','添加','增加','写入','写上','印上','配字','加字','呈现','二维码','扫码')
+        if any(value!=text for value in quoted) or any(term in remainder for term in text_commands):
+            raise ValueError('图片提示词要求了allowed_text以外的额外文字')
+        if prompt.count(canonical)!=1:
+            raise ValueError('图片提示词必须逐字包含allowed_text并要求只显示该文字')
+        normalized=re.sub(r'\s','',text)
+        if normalized not in re.sub(r'\s','',title) and normalized not in re.sub(r'\s','',body):
+            raise ValueError('图片文字必须直接摘自文章标题或正文')
+
+def render_image_prompt(plan,product_label,reference_label):
+    borrow='、'.join(plan.get('borrow',[]))
+    immutable='、'.join(plan.get('immutable',[])) or '产品外观、结构、颜色、部件和Logo'
+    parts=[f'场景：{plan.get("scene","").strip()}。']
+    if plan.get('people_actions','').strip():parts.append(f'人物动作：{plan["people_actions"].strip()}。')
+    parts.extend([f'产品图{product_label}只确定产品身份，保持产品不变，不得改变{immutable}。',
+                  f'参考图{reference_label}只借鉴{borrow}。',
+                  f'产品符合场景透视：{plan.get("perspective_strategy","").strip()}。',
+                  f'产品与场景光影融合：{plan.get("lighting_strategy","").strip()}。'])
+    text=plan.get('allowed_text','').strip()
+    parts.append(f'只显示文字“{text}”，不要添加其他文字。' if text else '画面不得出现任何可读文字、标语或二维码。')
+    return ''.join(parts)
 
 def validate_image_prompt(prompt,product_label,reference_label,borrow,perspective_strategy,lighting_strategy):
     if not all(isinstance(x,str) and x.strip() for x in (prompt,product_label,reference_label,perspective_strategy,lighting_strategy)):
