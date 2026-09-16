@@ -396,7 +396,52 @@ class Engine:
                 self.rules.activate(rule_ids,user_ref);t['rules_snapshot']=self.rules.snapshot(t['product']['product_id'])
             for f in t['feedback']:
                 if f['status']=='revised_waiting_approval' and (not a or f['object_id']==a['article_id']): f.update(status='confirmed',confirmed_at=now())
+            if t['stage']=='IMAGE_REVIEW' and t.get('mode_before_feedback')=='automatic':
+                t['mode']='automatic';t.pop('mode_before_feedback',None)
             self._advance(t);return self._save(t)
+
+    def accept_images(self,tid,action_id,revision,*,user_ref,actor='user'):
+        """Record explicit human acceptance of this article's current image versions."""
+        require_user(actor,user_ref)
+        with self._lock(tid):
+            t=self._load(tid);a=self._article(t)
+            if t['action_id']!=action_id or type(revision) is not int or t['revision']!=revision:
+                raise ValueError('action_id或版本过期；请重新展示当前对象')
+            if t['stage']!='IMAGE_REVIEW' or t['state'] not in ('IMAGE_REVIEW','PAUSED','WAITING_APPROVAL') or not a or not a['image_count']:
+                raise ValueError('当前不是可人工确认的图片审核')
+            if self._reflection(t,a):raise ValueError('当前修改仍须先完成结构化复盘')
+            if any(request.get('status') in ('UNKNOWN','IN_FLIGHT') for request in t.get('requests',[])):
+                raise ValueError('仍有收费状态未知的图片请求，不能完成图片审核')
+            self._check_snapshot(t);self._verify_files(t)
+            if len(a['images'])!=a['image_count'] or not a['results'].get('IMAGE_PLANNING'):
+                raise ValueError('当前图片文件数与计划不符')
+            body_hash=digest(a['results']['WRITING'])
+            plans={p['image_id']:p for p in a['results']['IMAGE_PLANNING']['images']}
+            if set(plans)!=set(a['images']):raise ValueError('当前图片ID与计划不符')
+            for image_id,image in a['images'].items():
+                if image['body_hash']!=body_hash or image['plan_hash']!=digest(plans[image_id]):
+                    raise ValueError('正文或图片计划变化，当前图片已失效')
+            image_hashes={image_id:image['hash'] for image_id,image in a['images'].items()}
+            result={'verdict':'passed','reviewer':'human','viewed_image_ids':list(image_hashes),
+                    'checks':[{'check_id':check_id,'verdict':'passed','severity':'info',
+                               'evidence':'用户明确接受当前文章的当前图片版本；人工结论仅适用于本次图片哈希。',
+                               'suggestion':''} for check_id in ('visible_text','product_structure','people_actions','visual_rules','body_alignment')]}
+            validate_result('IMAGE_REVIEW',result)
+            validate_review('IMAGE_REVIEW',result,has_images=True,mode='learning')
+            previous=a['results'].get('IMAGE_REVIEW')
+            if previous:t['history'].append({'stage':'IMAGE_REVIEW','object_id':a['article_id'],'revision':revision,'result':copy.deepcopy(previous)})
+            a['results']['IMAGE_REVIEW']=result
+            t['approvals'].append({'action_id':action_id,'revision':revision,'stage':'IMAGE_REVIEW',
+                                   'object_id':a['article_id'],'user_ref':user_ref,'image_hashes':image_hashes,
+                                   'review_source':'explicit_human_acceptance','at':now()})
+            for feedback in t['feedback']:
+                if feedback['object_id']==a['article_id'] and feedback['status']=='revised_waiting_approval' and feedback.get('reflection'):
+                    feedback.update(status='confirmed',confirmed_at=now())
+            if t.get('mode_before_feedback')=='automatic':
+                t['mode']='automatic';t.pop('mode_before_feedback',None)
+            t.pop('resume_state',None);t['error']=None
+            t['stage']=t['state']='FINAL_REVIEW'
+            return self._save(t)
 
     def revise(self,tid,action_id,revision,feedback,*,user_ref,actor='user',scope='article',target_id=None,image_id=None):
         require_user(actor,user_ref)
@@ -438,6 +483,7 @@ class Engine:
             # A proposal must not invalidate active snapshots, but is available as current-object feedback.
             if t.get('rules_snapshot'): t['rules_snapshot']=self.rules.snapshot(t['product']['product_id'])
             t['stage']=t['state']=revise_stage;t['error']=None
+            if t['mode']=='automatic':t['mode_before_feedback']='automatic'
             t['mode']='learning'  # Explicit feedback requires this revision to be shown and approved.
             return self._save(t)
 

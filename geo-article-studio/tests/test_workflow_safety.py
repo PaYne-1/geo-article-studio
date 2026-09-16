@@ -336,6 +336,11 @@ def test_single_image_revision_preserves_other_image_and_body(engine,monkeypatch
     assert result['articles'][0]['images']['A001_I02']==preserved
     assert len(provider.calls)==3
     assert result['state']=='IMAGE_REVIEW'
+    review=good_review('IMAGE_REVIEW');review['reviewer']='human';review['viewed_image_ids']=['A001_I01','A001_I02']
+    submit(engine,tid,review,actor='user')
+    waiting=engine.status(tid)
+    approved=engine.approve(tid,waiting['action_id'],waiting['revision'],user_ref='user:approve-current-images')
+    assert approved['state']=='FINAL_REVIEW' and approved['mode']=='automatic'
 
 def test_authorized_image_retry_raises_only_task_cap_and_preserves_other_image(engine,monkeypatch):
     import copy
@@ -363,6 +368,51 @@ def test_authorized_image_retry_raises_only_task_cap_and_preserves_other_image(e
     regenerated=engine.run_image(tid)
     assert regenerated['state']=='IMAGE_REVIEW'
     assert len(provider.calls)==3
+
+
+def test_human_accepts_current_failed_images_without_new_request(engine,monkeypatch):
+    from geo_article_studio.review import REVIEW_CHECKS
+    tid=image_task(engine,count=2);provider=mock_provider(monkeypatch,engine,tid)
+    engine.run_image(tid);engine.run_image(tid)
+    before=engine.status(tid)
+    hashes={key:value['hash'] for key,value in before['articles'][0]['images'].items()}
+    failed={'verdict':'failed','reviewer':'model','viewed_image_ids':list(hashes),
+            'checks':[{'check_id':check,'verdict':'failed' if check=='visual_rules' else 'passed',
+                       'severity':'hard' if check=='visual_rules' else 'info',
+                       'evidence':'二维遮挡造成空间关系不清' if check=='visual_rules' else '已查看当前图片',
+                       'suggestion':''} for check in REVIEW_CHECKS['IMAGE_REVIEW']]}
+    action=engine.next_action(tid)
+    engine.submit(tid,action['action_id'],action['expected_revision'],failed)
+    paused=engine.status(tid)
+    accepted=engine.accept_images(tid,paused['action_id'],paused['revision'],user_ref='user:current-images-ok')
+    assert accepted['state']==accepted['stage']=='FINAL_REVIEW'
+    assert accepted['mode']=='automatic'
+    assert len(accepted['requests'])==len(provider.calls)==2
+    review=accepted['articles'][0]['results']['IMAGE_REVIEW']
+    assert review['reviewer']=='human' and review['verdict']=='passed'
+    assert set(review['viewed_image_ids'])==set(hashes)
+    assert accepted['approvals'][-1]['image_hashes']==hashes
+    assert accepted['approvals'][-1]['user_ref']=='user:current-images-ok'
+    assert any(row.get('stage')=='IMAGE_REVIEW' and row.get('result',{}).get('verdict')=='failed'
+               for row in accepted['history'])
+    with pytest.raises(ValueError,match='过期|版本'):
+        engine.accept_images(tid,paused['action_id'],paused['revision'],user_ref='user:stale')
+
+
+def test_human_accept_images_rejects_missing_file(engine,monkeypatch):
+    tid=image_task(engine);mock_provider(monkeypatch,engine,tid)
+    state=engine.run_image(tid)
+    Path(state['articles'][0]['images']['A001_I01']['path']).unlink()
+    with pytest.raises(ValueError,match='图片|文件'):
+        engine.accept_images(tid,state['action_id'],state['revision'],user_ref='user:accept')
+
+
+def test_accept_images_cli_requires_action_version_and_user_reference():
+    from geo_article_studio.cli import parser
+    args=parser().parse_args(['accept-images','0123456789abcdef','--action-id','current-action',
+                              '--revision','12','--user-ref','user:accepted'])
+    assert (args.command,args.action_id,args.revision,args.user_ref)==(
+        'accept-images','current-action',12,'user:accepted')
 
 
 def test_second_failed_image_can_be_authorized_after_replan_invalidates_it(engine,monkeypatch):

@@ -46,7 +46,7 @@ def test_builtin_rules_upgrade_migrates_old_hash_and_preserves_custom_rules(tmp_
     atomic_json(store.path,old)
     upgraded=RuleStore(tmp_path).snapshot('test-product')
     assert any(r['rule_id']=='CUSTOM' and r['status']=='active' for r in upgraded['rules'])
-    assert upgraded['imports'][0]['source_version']=='geo-editorial.user-confirmed.v5'
+    assert upgraded['imports'][0]['source_version']==store._builtin()['imports'][0]['source_version']
     assert upgraded['version']>old['version']
 
 

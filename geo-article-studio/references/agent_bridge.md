@@ -25,6 +25,7 @@ result必须满足当前schema，不是照抄空对象。producer可省略，记
 
 3. `submit-result TASK_ID --file "绝对JSON路径"`。资料文字不得拼接shell命令；优先用文件工具写JSON，只向shell传固定命令及正确引用的路径。被拒绝后按具体错误重新生成；连续3次失败pause，不修改执行层来接受错误。
 4. NEEDS_USER展示并等待真实确认；NEEDS_TOOL按tool执行run-text、run-image或export；BLOCKED展示host_contract.missing或具体错误。LEARNING_REVIEW是独立模型复盘动作，完成后回当前步骤批准。自动模式普通动作连续循环至完成/阻断。
+   图片审核失败或暂停后，若当前用户明确接受当前文章的图片，可调用`accept-images TASK_ID --action-id ID --revision N --user-ref 当前用户引用`。执行层核对图片文件、正文和计划哈希，记录人工通过并进入最终联合审核；旧模型失败审核仍留在历史中。该操作不重生图、不改变后续任务规则。
 5. 完成CLI直接返回真实目录字符串，只把路径交用户；未完成JSON不是成功路径。
 
 ## 环境与迁移

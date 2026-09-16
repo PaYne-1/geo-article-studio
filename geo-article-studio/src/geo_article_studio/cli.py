@@ -36,10 +36,10 @@ def parser():
     c=command('switch-text-source',task=True,user=True);c.add_argument('--text-source',choices=['host','api'],required=True)
     c=command('authorize-image-retry',task=True,user=True);c.add_argument('image_id');c.add_argument('--new-cap',type=int,required=True)
     for name in ('select','submit-result'):command(name,task=True,file=True,user=name=='select')
-    for name in ('approve','revise'):
+    for name in ('approve','revise','accept-images'):
         c=command(name,task=True,user=True);c.add_argument('--action-id',required=True);c.add_argument('--revision',type=int,required=True)
         if name=='approve':c.add_argument('--rule-ids',nargs='*',default=[])
-        else:
+        elif name=='revise':
             c.add_argument('--feedback-file',type=Path,required=True);c.add_argument('--scope',default='article',choices=['article','topic','product','style','global']);c.add_argument('--target-id');c.add_argument('--image-id')
     for name in ('pause','resume','refresh'):command(name,task=True,user=True)
     c=command('fork-revision',task=True,user=True);c.add_argument('--feedback-file',type=Path,required=True);c.add_argument('--text-source',choices=['host','api'],required=True)
@@ -176,6 +176,7 @@ def run(args):
         if envelope.get('protocol',PROTOCOL)!=PROTOCOL:raise ValueError('不支持的宿主桥接协议版本')
         result=e.submit(args.task_id,envelope['action_id'],envelope['expected_revision'],envelope['result'],actor=envelope.get('actor','model'),user_ref=envelope.get('user_ref'),producer=envelope.get('producer'))
     elif cmd=='approve':result=e.approve(args.task_id,args.action_id,args.revision,user_ref=args.user_ref,rule_ids=args.rule_ids)
+    elif cmd=='accept-images':result=e.accept_images(args.task_id,args.action_id,args.revision,user_ref=args.user_ref)
     elif cmd=='revise':result=e.revise(args.task_id,args.action_id,args.revision,args.feedback_file.read_text(encoding='utf-8'),user_ref=args.user_ref,scope=args.scope,target_id=args.target_id,image_id=args.image_id)
     elif cmd in ('pause','resume','refresh'):result=getattr(e,cmd)(args.task_id,user_ref=args.user_ref)
     elif cmd=='retrieve':result=e.retrieve(args.task_id,args.query,args.library,args.limit)
