@@ -8,6 +8,7 @@
   "rule_import_sources": [],
   "products": [],
   "source_mappings": {},
+  "task_defaults": {},
   "defaults": {
     "language": "zh-CN", "mode": null,
     "image_ratio": "3:4", "image_dimensions": null, "image_format": "png",

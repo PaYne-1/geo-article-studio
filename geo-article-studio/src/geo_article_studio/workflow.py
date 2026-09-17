@@ -25,6 +25,7 @@ def execution_config_digest(value):
     """Ignore retry timing/policy fields that do not change requested content or providers."""
     stable=copy.deepcopy(value)
     stable.pop('text_retry_policy',None)
+    stable.pop('task_defaults',None)
     if isinstance(stable.get('text_provider'),dict):
         stable['text_provider'].pop('timeout_seconds',None)
     return digest(stable)

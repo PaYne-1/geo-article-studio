@@ -12,7 +12,7 @@ DEFAULT_SETTINGS = {
     'schema_version': '1.0', 'default_product_name': '218轻便侠',
     'libraries': dict.fromkeys(LIBRARY_TYPES), 'output_root': None,
     'workspace_root': None, 'user_path_mapping': None, 'rule_import_sources': [],
-    'products': [], 'source_mappings': {},
+    'products': [], 'source_mappings': {}, 'task_defaults': {},
     'defaults': {'language': 'zh-CN', 'mode': None, 'article_length': None,
                  'image_ratio': '3:4', 'image_dimensions': None, 'image_format': 'png',
                  'image_text_policy': 'auto', 'image_count_includes_cover': True},
@@ -89,6 +89,18 @@ def validate_settings(data: dict, production: bool = False) -> dict:
         raise ValueError('配置必须为 JSON 对象')
     _check_secrets(data)
     settings = _merge(copy.deepcopy(DEFAULT_SETTINGS), data)
+    task_defaults=settings.get('task_defaults')
+    if not isinstance(task_defaults,dict) or set(task_defaults)-{'goals','platforms','target_ais'}:
+        raise ValueError('task_defaults只能保存目标、发布平台和目标AI')
+    for key,value in task_defaults.items():
+        if (not isinstance(value,list) or not value or
+            any(not isinstance(item,str) or not item.strip() for item in value) or
+            len(value)!=len(set(value))):
+            raise ValueError('task_defaults字段必须是不重复的非空文本列表')
+    if 'goals' in task_defaults:
+        from .editorial import GOALS
+        if any(goal not in GOALS for goal in task_defaults['goals']):
+            raise ValueError('task_defaults包含未知任务目标')
     if settings.get('text_provider') is not None and not isinstance(settings['text_provider'],dict):
         raise ValueError('文字API配置text_provider必须为对象')
     if not isinstance(settings['libraries'], dict):

@@ -3,6 +3,28 @@ import pytest
 from geo_article_studio.config import DEFAULT_SETTINGS
 from geo_article_studio.host_bridge import route, form_for
 
+def test_persistent_editorial_choices_prefill_start_but_keep_per_task_choices_open():
+    from geo_article_studio.config import validate_settings
+    from geo_article_studio.workflow import execution_config_digest
+    settings=validate_settings({'task_defaults':{
+        'goals':['品牌曝光','型号种草','用户转化','AI引用'],
+        'platforms':['知乎','头条','搜狐','百家号','企鹅号','网易'],
+        'target_ais':['DeepSeek','豆包','文心一言','元宝']}})
+    form=form_for('开始任务',settings)
+    assert form['values']['goals']==settings['task_defaults']['goals']
+    assert form['values']['platforms']==settings['task_defaults']['platforms']
+    assert form['values']['target_ais']==settings['task_defaults']['target_ais']
+    assert {'mode','text_source','article_type'} <= set(form['missing'])
+    assert form_for('开始任务',settings,{'goals':['AI引用']})['values']['goals']==['AI引用']
+    assert execution_config_digest(settings)==execution_config_digest(validate_settings({}))
+
+def test_task_defaults_reject_mode_and_invalid_goals():
+    from geo_article_studio.config import validate_settings
+    with pytest.raises(ValueError,match='task_defaults'):
+        validate_settings({'task_defaults':{'mode':'automatic'}})
+    with pytest.raises(ValueError,match='task_defaults'):
+        validate_settings({'task_defaults':{'goals':['绝对第一']}})
+
 def test_only_two_entrypoints_and_contextual_controls():
     assert route('开始任务')=='start'
     assert route('配置任务')=='configure_task'

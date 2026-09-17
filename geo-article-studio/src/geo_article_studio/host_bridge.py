@@ -1,5 +1,6 @@
 """Small direct-user router and strict host/model result contracts."""
 import re
+import copy
 import jsonschema
 from .config import DEFAULT_SETTINGS, _check_secrets
 from .editorial import PLAN_SCHEMA, DRAFT_SCHEMA, GOALS, PLATFORMS, TARGET_AIS
@@ -34,7 +35,11 @@ def form_for(trigger,settings,provided=None,*,config_path=None,persisted=None):
         result['text_options']=[{'value':'host','label':'当前Agent默认模型','available':True},{'value':'api','label':'第三方文字API','model':text_config.get('model'),'available':text_check['ok'],'missing':text_check['errors']}]
         return result
     values={'product':product,'mode':defaults.get('mode'),'text_source':None,'chat_scope':'当前产品相关记录及标注的通用品类记录','extra_requirements':''}; required=['product','mode','text_source']
-    values.update(goals=None,platforms=None,target_ais=None,article_type=None)
+    task_defaults=settings.get('task_defaults') or {}
+    values.update(goals=copy.deepcopy(task_defaults.get('goals')),
+                  platforms=copy.deepcopy(task_defaults.get('platforms')),
+                  target_ais=copy.deepcopy(task_defaults.get('target_ais')),
+                  article_type=None)
     required+=['goals','platforms','target_ais','article_type']
     if set(p)-set(values):raise ValueError('预填含未知表单字段')
     values.update(p)
