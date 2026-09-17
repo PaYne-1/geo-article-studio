@@ -6,6 +6,7 @@ import jsonschema
 VERSION='geo-editorial.v2'
 IMAGE_POLICY_VERSION='multi-reference.v1'
 IMAGE_TEXT_POLICY_VERSION='auto-text.v1'
+ARTICLE_IMAGE_POLICY_VERSION='article-poster.v1'
 REQUIRED_IMAGE_RATIO='3:4'
 REQUIRED_IMAGE_DIMENSION_RATIO=(3,4)
 REVIEW_STAGES=('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW')
@@ -89,7 +90,27 @@ def validate_images(result,count,*,require_product=True):
     if any(r not in STANDARDS['images']['four_roles'] for r in roles):raise ValueError('配图须明确正文用途')
     if count==4 and roles!=STANDARDS['images']['four_roles']:raise ValueError('四图结构须为封面、内容总结、真实场景、产品或总结')
 
-def validate_image_text_plan(images,policy,title,body):
+def validate_article_image_plan(images,body):
+    """Require distinct article ideas to become visible graphic directions."""
+    kinds={'editorial_poster','infographic_poster','lifestyle_scene','product_detail'}
+    seen=set()
+    for image in images:
+        kind=image.get('visual_kind')
+        anchors=image.get('content_anchors')
+        if kind not in kinds or not isinstance(anchors,list) or not anchors or not all(isinstance(x,str) and x.strip() for x in anchors):
+            raise ValueError('图片须填写视觉类型和正文锚点')
+        if not image.get('visual_mapping','').strip():raise ValueError('图片须说明正文信息如何进入画面')
+        if kind.endswith('poster') and not image.get('reference_style','').strip():
+            raise ValueError('图文信息海报须说明参考图视觉风格')
+        for anchor in anchors:
+            normalized=re.sub(r'\s','',anchor)
+            if normalized not in re.sub(r'\s','',body):raise ValueError('图片锚点必须逐字来自正文')
+            if normalized in seen:raise ValueError('多张配图不能重复同一正文锚点')
+            seen.add(normalized)
+    if len(images)>=2 and not any(x['visual_kind'].endswith('poster') for x in images):
+        raise ValueError('多张配图至少一张应为图文信息海报')
+
+def validate_image_text_plan(images,policy,title,body,*,poster=False):
     texts=[p.get('allowed_text','').strip() for p in images]
     if policy=='none':
         if any(texts):raise ValueError('当前图中文字策略禁止文字')
@@ -98,7 +119,13 @@ def validate_image_text_plan(images,policy,title,body):
         raise ValueError('自动图中文字策略下，每篇至少一张图片应加入少量正文相关文字')
     for plan,text in zip(images,texts):
         if not text:continue
-        if len(re.sub(r'\s','',text))>16 or len(text.splitlines())>2:
+        is_poster=poster and plan.get('visual_kind','').endswith('poster')
+        if is_poster:
+            if len(text.splitlines())>4 or any(len(re.sub(r'\s','',line))>16 for line in text.splitlines()):
+                raise ValueError('图文海报最多四行，每行16个字符')
+            if re.search(r'\d',text) and not plan.get('fact_ids'):
+                raise ValueError('海报数字必须绑定已批准事实')
+        elif len(re.sub(r'\s','',text))>16 or len(text.splitlines())>2:
             raise ValueError('图片文字最多16个字符、两行')
         prompt=plan.get('prompt','')
         canonical=f'只显示文字“{text}”，不要添加其他文字'
@@ -109,14 +136,18 @@ def validate_image_text_plan(images,policy,title,body):
             raise ValueError('图片提示词要求了allowed_text以外的额外文字')
         if prompt.count(canonical)!=1:
             raise ValueError('图片提示词必须逐字包含allowed_text并要求只显示该文字')
-        normalized=re.sub(r'\s','',text)
-        if normalized not in re.sub(r'\s','',title) and normalized not in re.sub(r'\s','',body):
+        if any(re.sub(r'\s','',line) not in re.sub(r'\s','',title+'\n'+body) for line in text.splitlines()):
             raise ValueError('图片文字必须直接摘自文章标题或正文')
 
 def render_image_prompt(plan,product_label,reference_label):
     borrow='、'.join(plan.get('borrow',[]))
     immutable='、'.join(plan.get('immutable',[])) or '产品外观、结构、颜色、部件和Logo'
     parts=[f'场景：{plan.get("scene","").strip()}。']
+    if plan.get('content_anchors'):
+        parts.append(f'这张图要让读者看懂的正文要点：{"；".join(plan["content_anchors"])}。')
+        parts.append(f'画面表达：{plan.get("visual_mapping","").strip()}。')
+        parts.append(f'视觉类型：{plan.get("visual_kind","")}。')
+        if plan.get('reference_style'):parts.append(f'参考图的视觉风格具体借鉴：{plan["reference_style"].strip()}。')
     if plan.get('people_actions','').strip():parts.append(f'人物动作：{plan["people_actions"].strip()}。')
     parts.extend([f'产品图{product_label}只确定产品身份，保持产品不变，不得改变{immutable}。',
                   f'参考图{reference_label}只借鉴{borrow}。',
@@ -129,7 +160,7 @@ def render_image_prompt(plan,product_label,reference_label):
 def validate_image_prompt(prompt,product_label,reference_label,borrow,perspective_strategy,lighting_strategy):
     if not all(isinstance(x,str) and x.strip() for x in (prompt,product_label,reference_label,perspective_strategy,lighting_strategy)):
         raise ValueError('配图提示词须写明产品图、参考图、场景透视和光影融合策略')
-    factors=('构图','机位','人物与产品尺度','自然光线','空间层次','生活化风格')
+    factors=('构图','机位','人物与产品尺度','自然光线','空间层次','生活化风格','视觉风格')
     if not isinstance(borrow,list) or not borrow or any(x not in factors for x in borrow) or len(set(borrow))!=len(borrow):
         raise ValueError('参考图借鉴范围必须使用非空标准因素列表')
     if product_label not in prompt:raise ValueError('配图提示词必须写明实际采用的产品图文件名')
@@ -138,7 +169,7 @@ def validate_image_prompt(prompt,product_label,reference_label,borrow,perspectiv
         raise ValueError('配图提示词必须区分产品图与参考图的用途边界')
     match=re.search(re.escape(reference_label)+r'([^；。\n]*)',prompt)
     clause=match.group(1) if match else ''
-    aliases={'构图':'构图','机位':'机位','尺度':'人物与产品尺度','光线':'自然光线','空间层次':'空间层次','生活化风格':'生活化风格'}
+    aliases={'构图':'构图','机位':'机位','尺度':'人物与产品尺度','光线':'自然光线','空间层次':'空间层次','生活化风格':'生活化风格','视觉风格':'视觉风格'}
     if any(factor not in clause for factor in borrow) or any(token in clause and factor not in borrow for token,factor in aliases.items()):
         raise ValueError('提示词中的参考图借鉴范围必须与borrow及授权完全一致')
     if '产品不变' not in prompt:raise ValueError('配图提示词必须明确保持产品不变')

@@ -56,8 +56,11 @@ S={'type':'string','minLength':1}; STRINGS={'type':'array','items':S}; IDS=STRIN
 CLAIM=obj({'text':S,'fact_ids':IDS})
 TOPIC=obj({'topic_id':S,'direction':S,'question_summary':S,'source_ids':IDS,'scope':{'enum':['product_specific','general']},'count_basis':{'enum':['conversation','fragment','reported_aggregate','unknown']},'verified_count':{'type':['integer','null'],'minimum':0},'supporting_fact_ids':IDS,'distinct_angles':STRINGS,'gaps':STRINGS,'status':{'enum':['ready','needs_evidence']},'priority_reason':S})
 IMAGE=obj({'image_id':S,'article_id':S,'paragraph':{'type':'integer','minimum':1},'purpose':S,'scene':S,'people_actions':{'type':'string'},'show_product':{'type':'boolean'},'product_image_ids':IDS,'reference_image_ids':IDS,'borrow':STRINGS,'immutable':STRINGS,'allowed_text':{'type':'string'},'prompt':S,'fact_ids':IDS})
+IMAGE['properties'].update({'visual_kind':{'enum':['editorial_poster','infographic_poster','lifestyle_scene','product_detail']},
+                            'content_anchors':STRINGS,'visual_mapping':S,'reference_style':{'type':'string'}})
 CHECK=obj({'check_id':S,'verdict':{'enum':['passed','failed','needs_review']},'severity':{'enum':['info','warning','hard']},'evidence':S,'suggestion':{'type':'string'}})
 REVIEW=obj({'verdict':{'enum':['passed','failed','needs_review']},'reviewer':{'enum':['model','qwen','human']},'checks':{'type':'array','items':CHECK,'minItems':1},'viewed_image_ids':IDS})
+REVIEW['properties']['failed_image_ids']=IDS
 SCHEMAS={
  'LEARNING_REVIEW':obj({'feedback_id':S,'reason':S,'reason_uncertain':{'type':'boolean'},'corrective_action':S,'check_method':S}),
  'PREFLIGHT':obj({'understanding':S,'source_ids':IDS,'gaps':STRINGS}),

@@ -134,7 +134,7 @@ class Engine:
         tid=uuid.uuid4().hex[:16]
         t={'task_id':tid,'product':product,'mode':mode,'state':'PREFLIGHT','stage':'PREFLIGHT','revision':0,'current_article':0,'articles':[],'topics':[],
            'sources':sources,'facts':facts,'coverage':report,'chat_scope':scope,'extra_requirements':extra_requirements,'results':{},'history':[],'approvals':[],'feedback':[],
-           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'image_text_policy_version':editorial.IMAGE_TEXT_POLICY_VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'analysis_cache_bypass':not reuse_analysis,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
+           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'image_text_policy_version':editorial.IMAGE_TEXT_POLICY_VERSION,'article_image_policy_version':editorial.ARTICLE_IMAGE_POLICY_VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'analysis_cache_bypass':not reuse_analysis,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
         with self._lock(tid): return self._save(t)
 
     def _check_action(self,t,aid,revision):
@@ -377,11 +377,36 @@ class Engine:
                 if stage in ('TEXT_REVIEW',*editorial.REVIEW_STAGES):
                     issues=check_text(a['results']['WRITING'],t['facts'],self._applicable(t,a),[t['product']['name']])
                     if issues: raise ValueError('正式文本校验失败')
-                passed=validate_review(stage,result,visual_capable=visual_available(self.settings),has_images=bool(a['image_count']),mode=t['mode'])
+                passed=validate_review(stage,result,visual_capable=visual_available(self.settings),has_images=bool(a['image_count']),mode=t['mode'],article_visual=t.get('article_image_policy_version')==editorial.ARTICLE_IMAGE_POLICY_VERSION)
                 if stage in ('IMAGE_REVIEW','FINAL_REVIEW') and a['image_count']:
                     if set(result['viewed_image_ids'])!=set(a['images']): raise ValueError('视觉审核未覆盖当前实际图片')
+                if stage=='IMAGE_REVIEW' and result.get('failed_image_ids'):
+                    if result['verdict']!='failed' or not set(result['failed_image_ids']).issubset(set(a['images'])) or len(set(result['failed_image_ids']))!=len(result['failed_image_ids']):
+                        raise ValueError('失败图片ID必须是本次实际审核过的不合格图片')
                 if not passed:
                     t['history'].append({'stage':stage,'object_id':a['article_id'],'revision':t['revision'],'result':result})
+                    failed_ids=result.get('failed_image_ids',[])
+                    if stage=='IMAGE_REVIEW' and t['mode']=='automatic' and result['verdict']=='failed' and failed_ids:
+                        limits=t['authorization']['limits']
+                        counted=[r for r in t['requests'] if not (r.get('status')=='FAILED' and r.get('error_code')=='output_exists')]
+                        cap=limits.get('max_image_requests_per_task')
+                        enough_total=cap is None or len(counted)+len(failed_ids)<=cap
+                        enough_each=all(sum(r['image_id']==image_id for r in counted)<limits.get('max_generation_attempts_per_image',3)
+                                        for image_id in failed_ids)
+                        if enough_total and enough_each and not any(r['status'] in ('UNKNOWN','IN_FLIGHT') for r in t['requests']):
+                            a['review_feedback']=copy.deepcopy(result)
+                            a['previous_image_plan']=copy.deepcopy(a['results'].pop('IMAGE_PLANNING'))
+                            for image_id in failed_ids:
+                                old=a['images'].pop(image_id)
+                                old_path=Path(old['path']).resolve(strict=True)
+                                if not old_path.is_relative_to(self._path(tid).resolve()):raise ValueError('失败图片路径越界')
+                                archive=old_path.parent/'rejected'/f'{old["request_id"]}{old_path.suffix}'
+                                archive.parent.mkdir(parents=True,exist_ok=True)
+                                old_path.replace(archive)
+                                t['history'].append({'reason':'automatic_visual_replan','image_id':image_id,
+                                                     'archived_image':{**old,'path':str(archive)}})
+                            t['stage']=t['state']='IMAGE_PLANNING';t['error']=None
+                            return self._save(t)
                     if stage in ('TEXT_REVIEW',*editorial.REVIEW_STAGES) and a['text_attempts']<self.settings.get('limits',{}).get('max_text_revision_attempts',3):
                         a['text_attempts']+=1;a['review_feedback']=result
                         if t.get('editorial_version') and stage in editorial.REVIEW_STAGES:
@@ -565,6 +590,9 @@ class Engine:
     def _validate_image_plan(self,t,a,result):
         images=result['images'];d=self.settings['defaults']
         if t.get('editorial_version'):editorial.validate_images(result,a['image_count'],require_product=t.get('editorial_version')==editorial.VERSION)
+        draft=a['results']['WRITING']
+        poster_policy=t.get('article_image_policy_version')==editorial.ARTICLE_IMAGE_POLICY_VERSION
+        if poster_policy:editorial.validate_article_image_plan(images,draft['body'])
         if t.get('image_text_policy_version')==editorial.IMAGE_TEXT_POLICY_VERSION:
             for p in images:
                 if (t.get('image_policy_version')==editorial.IMAGE_POLICY_VERSION and p.get('show_product')
@@ -574,8 +602,7 @@ class Engine:
                     label=Path(source.get('location',{}).get('relative_path') or self._source_path(source).name).name
                     reference_label=Path(reference.get('location',{}).get('relative_path') or self._source_path(reference).name).name
                     p['prompt']=editorial.render_image_prompt(p,label,reference_label)
-            draft=a['results']['WRITING']
-            editorial.validate_image_text_plan(images,d['image_text_policy'],draft['title'],draft['body'])
+            editorial.validate_image_text_plan(images,d['image_text_policy'],draft['title'],draft['body'],poster=poster_policy)
         if len(images)!=a['image_count'] or len({x['image_id'] for x in images})!=len(images): raise ValueError('图片计划数量或ID不正确')
         paragraphs=a['results']['WRITING']['body'].split('\n\n')
         for i,p in enumerate(images,1):
@@ -602,6 +629,14 @@ class Engine:
                 reference_label=Path(reference.get('location',{}).get('relative_path') or self._source_path(reference).name).name
                 if p.get('product_source_label')!=label:raise ValueError('图片计划标注的产品图文件名与实际来源不一致')
                 editorial.validate_image_prompt(p.get('prompt',''),label,reference_label,p.get('borrow'),p.get('perspective_strategy',''),p.get('lighting_strategy',''))
+            if poster_policy and p.get('reference_style') and '视觉风格' not in p.get('borrow',[]):
+                raise ValueError('参考图视觉风格必须列入borrow并获得授权')
+            if poster_policy and any(char.isdigit() for char in p.get('allowed_text','')):
+                approved={f['fact_id']:f for f in t['facts'] if f.get('status')=='approved'}
+                evidence=' '.join(str(approved[fid].get(key,'')) for fid in p.get('fact_ids',[]) if fid in approved for key in ('text','claim','value','quote'))
+                values=set(re.findall(r'\d+(?:\.\d+)?',p['allowed_text']))
+                if not values or not p.get('fact_ids') or any(v not in evidence for v in values):
+                    raise ValueError('海报数字必须由已批准事实逐项支持')
             if not p['reference_image_ids'] and not self.settings.get('reference_fallback',{}).get('user_ref'): raise ValueError('缺少合适参考图及已批准替代策略')
             if d['image_text_policy']=='none' and p['allowed_text']: raise ValueError('当前图中文字策略禁止文字')
             from .review import normalized
@@ -797,6 +832,7 @@ class Engine:
             t['editorial_version']=editorial.VERSION
             t['image_policy_version']=editorial.IMAGE_POLICY_VERSION
             t['image_text_policy_version']=editorial.IMAGE_TEXT_POLICY_VERSION
+            t['article_image_policy_version']=editorial.ARTICLE_IMAGE_POLICY_VERSION
             # A new delivery root prevents collisions with articles published before refresh.
             t.pop('output_path',None);(self._path(tid)/'pause.json').unlink(missing_ok=True)
             return self._save(t)

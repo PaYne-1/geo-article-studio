@@ -421,6 +421,31 @@ def test_single_image_revision_preserves_other_image_and_body(engine,monkeypatch
     approved=engine.approve(tid,waiting['action_id'],waiting['revision'],user_ref='user:approve-current-images')
     assert approved['state']=='FINAL_REVIEW' and approved['mode']=='automatic'
 
+
+def test_automatic_visual_failure_replans_only_failed_image_within_existing_cap(engine,monkeypatch):
+    import copy
+    tid=image_task(engine,count=2,limit_changes={'max_image_requests_per_task':3})
+    provider=mock_provider(monkeypatch,engine,tid)
+    engine.run_image(tid);state=engine.run_image(tid)
+    kept=copy.deepcopy(state['articles'][0]['images']['A001_I02'])
+    failed=good_review('IMAGE_REVIEW')
+    failed['verdict']='failed'
+    failed['viewed_image_ids']=['A001_I01','A001_I02']
+    failed['failed_image_ids']=['A001_I01']
+    first=next(c for c in failed['checks'] if c['check_id']=='visible_text')
+    first.update(verdict='failed',severity='hard',evidence='A001_I01出现计划外文字',suggestion='仅重做第一张')
+    submit(engine,tid,failed)
+    pending=engine.status(tid)
+    assert pending['state']=='IMAGE_PLANNING' and pending['mode']=='automatic'
+    assert pending['articles'][0]['images']=={'A001_I02':kept}
+    revised=copy.deepcopy(state['articles'][0]['results']['IMAGE_PLANNING'])
+    revised['images'][0]['scene']='纠正计划外文字的新构图'
+    submit(engine,tid,revised)
+    complete=engine.run_image(tid)
+    assert complete['state']=='IMAGE_REVIEW'
+    assert complete['articles'][0]['images']['A001_I02']==kept
+    assert len(provider.calls)==3
+
 def test_authorized_image_retry_raises_only_task_cap_and_preserves_other_image(engine,monkeypatch):
     import copy
     from geo_article_studio.review import REVIEW_CHECKS

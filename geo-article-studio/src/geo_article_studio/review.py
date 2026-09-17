@@ -43,9 +43,11 @@ REVIEW_CHECKS={
     'FINAL_REVIEW':['claims','semantic_rules','privacy','title_body','files','image_alignment'],
 }
 
-def validate_review(stage,result,*,visual_capable=False,has_images=False,mode='automatic'):
+def validate_review(stage,result,*,visual_capable=False,has_images=False,mode='automatic',article_visual=False):
     checks={x['check_id']:x for x in result['checks']}
-    if not set(REVIEW_CHECKS[stage]).issubset(checks): raise ValueError('独立审核缺少必需检查项')
+    required=set(REVIEW_CHECKS[stage])
+    if article_visual and stage=='IMAGE_REVIEW':required.update(('content_visualization','reference_style'))
+    if not required.issubset(checks): raise ValueError('独立审核缺少必需检查项')
     if any(not c.get('evidence') for c in result['checks']): raise ValueError('审核必须记录简短证据/位置')
     if stage=='IMAGE_REVIEW' or (stage=='FINAL_REVIEW' and has_images):
         if result.get('reviewer')=='human':

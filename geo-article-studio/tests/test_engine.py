@@ -34,6 +34,7 @@ def engine(tmp_path):
             from geo_article_studio.storage import atomic_json
             task=super().start(*args,**kwargs)
             task.pop('editorial_version',None)
+            task.pop('article_image_policy_version',None)
             atomic_json(self._path(task['task_id'])/'state.json',task)
             return task
     return LegacySnapshotEngine(settings,index=Index(tmp_path),products=Products())

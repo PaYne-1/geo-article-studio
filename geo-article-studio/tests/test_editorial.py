@@ -113,6 +113,53 @@ def test_auto_image_text_prefers_short_article_related_copy_and_requires_prompt(
     assert '扫码购买' not in rendered
     assert rendered.count('只显示文字“轻装出行”，不要添加其他文字')==1
 
+
+def test_article_image_plan_rejects_scene_only_repetition_and_requires_information_poster():
+    from geo_article_studio.editorial import validate_article_image_plan
+    body='先核对往返路程，并预留余量。产品资料显示6.6A电池续航约12公里。'
+    images=[{'visual_kind':'lifestyle_scene','content_anchors':['往返路程'],
+             'visual_mapping':'画出家到目的地再返回的路线，提示留出返程余量',
+             'reference_style':'参考图的标题层级与醒目信息块'},
+            {'visual_kind':'lifestyle_scene','content_anchors':['往返路程'],
+             'visual_mapping':'画出社区路线','reference_style':'参考图的标题层级'}]
+    with pytest.raises(ValueError,match='图文信息海报|重复'):
+        validate_article_image_plan(images,body)
+    images[1].update(visual_kind='infographic_poster',content_anchors=['6.6A电池续航约12公里'],
+                     visual_mapping='以信息卡片标出6.6A电池续航约12公里')
+    validate_article_image_plan(images,body)
+    images[1]['content_anchors']=['没有出现在文章里的卖点']
+    with pytest.raises(ValueError,match='正文'):
+        validate_article_image_plan(images,body)
+
+
+def test_article_poster_labels_must_be_exact_body_lines_and_fact_backed():
+    from geo_article_studio.editorial import validate_image_text_plan
+    body='6.6A电池续航约12公里、15A电池续航25公里、22A电池续航约39公里。'
+    image={'allowed_text':'6.6A电池续航约12公里\n15A电池续航25公里\n22A电池续航约39公里',
+           'prompt':'只显示文字“6.6A电池续航约12公里\n15A电池续航25公里\n22A电池续航约39公里”，不要添加其他文字',
+           'visual_kind':'infographic_poster','fact_ids':['F1']}
+    validate_image_text_plan([image],'auto','续航怎么选？',body,poster=True)
+    image['fact_ids']=[]
+    with pytest.raises(ValueError,match='事实'):
+        validate_image_text_plan([image],'auto','续航怎么选？',body,poster=True)
+    image['fact_ids']=['F1'];image['allowed_text']=image['allowed_text'].replace('39公里','49公里')
+    image['prompt']=image['prompt'].replace('39公里','49公里')
+    with pytest.raises(ValueError,match='标题或正文'):
+        validate_image_text_plan([image],'auto','续航怎么选？',body,poster=True)
+
+
+def test_new_visual_review_requires_visible_article_information_and_reference_style():
+    from geo_article_studio.review import validate_review
+    from test_engine import good_review
+    result=good_review('IMAGE_REVIEW')
+    result['viewed_image_ids']=['A001_I01','A001_I02']
+    with pytest.raises(ValueError,match='必需检查项'):
+        validate_review('IMAGE_REVIEW',result,visual_capable=True,has_images=True,article_visual=True)
+    for check_id in ('content_visualization','reference_style'):
+        result['checks'].append({'check_id':check_id,'verdict':'passed','severity':'info',
+                                 'evidence':'逐张查看生成图并核对正文锚点和参考图风格','suggestion':''})
+    assert validate_review('IMAGE_REVIEW',result,visual_capable=True,has_images=True,article_visual=True)
+
 @pytest.fixture
 def current_engine(tmp_path):
     """New production Engine, actual file/rule persistence and explicit fictional evidence."""
@@ -362,12 +409,20 @@ def test_new_four_image_flow_downloads_and_exports_independent_files(current_eng
     e.settings.update(image_provider=config(server),reference_fallback={'user_ref':'test:user:no-reference'},host={'visual_capability':True,'visual_verification_ref':'SIMULATED_ONLY'})
     e.settings['defaults'].update(image_dimensions=[24,32],image_ratio='3:4',image_format='png',image_text_policy='none')
     e.settings['limits'].update(max_image_requests_per_task=4,max_generation_attempts_per_image=1)
+    e.settings['image_authorizations']['RI1']['allow_borrow'].append('视觉风格')
     tid=prepare(e);e.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[4]}],user_ref='test:user:four-images')
     submit(e,tid,plan());submit(e,tid,draft())
     for stage in ('FACT_REVIEW','GEO_REVIEW','CONTENT_REVIEW'):submit(e,tid,good_review(stage))
     aid=e.status(tid)['articles'][0]['article_id']
     roles=['cover','content_summary','real_scene','product_summary']
     images=[{'image_id':f'{aid}_I{i:02d}','article_id':aid,'paragraph':i,'purpose':'虚构流程测试','scene':'产品自然出现的中性示意场景','people_actions':'','show_product':True,'product_image_ids':['PI1'],'reference_image_ids':['RI1'],'borrow':['构图'],'immutable':['product_structure'],'allowed_text':'','prompt':'产品图product.png只确定产品身份，参考图reference.png只借鉴构图；保持产品不变并让产品符合场景透视，与场景完成光影融合；3:4竖版独立测试图，无文字','product_source_label':'product.png','perspective_strategy':'使用统一消失点和相机高度，按真实尺度放置，明确地面接触和遮挡关系','lighting_strategy':'匹配主光方向、色温、环境反光、接触阴影、投影、边缘色溢、景深和颗粒','fact_ids':[],'role':role,'layout':'single','render_mode':'reference_edit'} for i,role in enumerate(roles,1)]
+    body_paragraphs=draft()['body'].split('\n\n')
+    for i,image in enumerate(images):
+        image['visual_kind']=['editorial_poster','infographic_poster','lifestyle_scene','product_detail'][i]
+        image['content_anchors']=[body_paragraphs[i].split('\n')[0][:18]]
+        image['visual_mapping']='把该段落的核对步骤变为画面中的可见路线或信息块'
+        image['reference_style']='借鉴参考图的信息层级' if i<2 else ''
+        if i<2:image['borrow'].append('视觉风格')
     invalid=copy.deepcopy(images);invalid[1]['role']='cover'
     with pytest.raises(ValueError):submit(e,tid,{'images':invalid})
     invalid=copy.deepcopy(images);invalid[0]['product_image_ids']=['PI1','PI1']
@@ -376,6 +431,8 @@ def test_new_four_image_flow_downloads_and_exports_independent_files(current_eng
     with pytest.raises(ValueError,match='一张场景参考图'):submit(e,tid,{'images':invalid})
     invalid=copy.deepcopy(images);invalid[0]['render_mode']='background_composite'
     with pytest.raises(ValueError,match='生成式融合|背景贴图'):submit(e,tid,{'images':invalid})
+    missing=copy.deepcopy(images);missing[0].pop('content_anchors')
+    with pytest.raises(ValueError,match='正文锚点|视觉类型'):submit(e,tid,{'images':missing})
     submit(e,tid,{'images':images})
     for _ in range(4):e.run_image(tid)
     generated=e.status(tid)['articles'][0]['images']
@@ -384,6 +441,10 @@ def test_new_four_image_flow_downloads_and_exports_independent_files(current_eng
     for stage in ('IMAGE_REVIEW','FINAL_REVIEW'):
         assert e.next_action(tid)['stage']==stage
         result=good_review(stage);result['viewed_image_ids']=[p['image_id'] for p in images]
+        if stage=='IMAGE_REVIEW':
+            for check_id in ('content_visualization','reference_style'):
+                result['checks'].append({'check_id':check_id,'verdict':'passed','severity':'info',
+                                         'evidence':'SIMULATED ONLY: 虚构图片内容审核协议测试','suggestion':''})
         submit(e,tid,result)  # Scripted verdict, explicitly not real visual review.
     output=Path(e.export(tid));files=list(output.rglob('*.png'))
     assert len(server['requests'])==4 and len(files)==4
