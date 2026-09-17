@@ -234,6 +234,24 @@ def test_start_form_generates_titles_from_chat_and_selection_binds_confirmed_tit
     assert action['context']['geo_brief']==brief()
     assert action['context']['editorial_standards']['length']['short']==[600,800]
 
+
+def test_current_editorial_task_can_select_images_with_explicit_direct_use_and_no_vision(current_engine):
+    from test_engine import submit
+    e=current_engine
+    e.settings['image_provider']={'adapter':'openai_compatible','model':'offline-fixture',
+                                  'supports_references':True,'max_reference_images':2}
+    e.settings['defaults'].update(image_dimensions=[24,32],image_ratio='3:4',image_format='png',image_text_policy='none')
+    tid=e.start('test-product','automatic',text_source='host',user_ref='test:user:direct-use',
+                geo_brief=brief(),image_review_policy='direct_use')['task_id']
+    submit(e,tid,{'understanding':'虚构GEO标准流程测试','source_ids':['S1'],'gaps':[]})
+    submit(e,tid,{'topics':[{'topic_id':'T1','direction':'资料核对','question_summary':brief()['original_title'],
+        'source_ids':['S1'],'scope':'product_specific','count_basis':'conversation','verified_count':1,
+        'supporting_fact_ids':['F1'],'distinct_angles':['核对准备'],'gaps':[],'status':'ready',
+        'priority_reason':'虚构客户问题'}],'coverage_note':'单个虚构会话'})
+    selected=e.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[1]}],user_ref='test:user:select')
+    assert selected['state']=='PLANNING'
+    assert selected['authorization']['image_review_policy']['user_ref']=='test:user:direct-use'
+
 def test_selected_chat_title_must_be_question_and_cannot_be_replaced(current_engine):
     from test_engine import submit
     e=current_engine

@@ -43,13 +43,18 @@ REVIEW_CHECKS={
     'FINAL_REVIEW':['claims','semantic_rules','privacy','title_body','files','image_alignment'],
 }
 
-def validate_review(stage,result,*,visual_capable=False,has_images=False,mode='automatic',article_visual=False):
+def validate_review(stage,result,*,visual_capable=False,has_images=False,mode='automatic',article_visual=False,image_review_policy='reviewed'):
     checks={x['check_id']:x for x in result['checks']}
     required=set(REVIEW_CHECKS[stage])
+    direct_final=stage=='FINAL_REVIEW' and has_images and image_review_policy=='direct_use'
+    if direct_final:
+        required.discard('image_alignment')
+        if 'image_alignment' in checks or result.get('viewed_image_ids'):
+            raise ValueError('未审核图片不能宣称视觉检查或图片对齐通过')
     if article_visual and stage=='IMAGE_REVIEW':required.update(('content_visualization','reference_style'))
     if not required.issubset(checks): raise ValueError('独立审核缺少必需检查项')
     if any(not c.get('evidence') for c in result['checks']): raise ValueError('审核必须记录简短证据/位置')
-    if stage=='IMAGE_REVIEW' or (stage=='FINAL_REVIEW' and has_images):
+    if stage=='IMAGE_REVIEW' or (stage=='FINAL_REVIEW' and has_images and not direct_final):
         if result.get('reviewer')=='human':
             if mode!='learning': raise ValueError('自动模式需要实际视觉能力')
         elif not visual_capable: raise ValueError('没有实际视觉能力，不能标记AI视觉审核通过')

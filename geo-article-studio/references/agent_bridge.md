@@ -6,7 +6,7 @@ v1.4新增三个独立文本审核动作FACT_REVIEW/GEO_REVIEW/CONTENT_REVIEW，
 
 ## 能力声明
 
-将config/host.example.json合并到运行配置。host.agent可以是hermes、codex、claude-code或其他标识；host.model记录实际模型，不知道则保持null。capabilities使用true/false/null：file_io、terminal、structured_results、human_confirmation，自动图片审核另需visual_review及visual_verification_ref。null是未确认，不等于true。
+将config/host.example.json合并到运行配置。host.agent可以是hermes、codex、claude-code或其他标识；host.model记录实际模型，不知道则保持null。capabilities使用true/false/null：file_io、terminal、structured_results、human_confirmation，默认自动图片审核另需visual_review及visual_verification_ref；本轮用户显式选择direct_use的自动任务无需视觉能力，但成品会注明未做视觉审核。null是未确认，不等于true。
 
 `python "技能路径/scripts/geo.py" host-check --file "宿主配置.json"`无需产品资料。加`--stage IMAGE_REVIEW --with-images --mode automatic`检查图片审核能力。ready只表示声明满足契约；declared_only不等于平台实测。旧版未声明capabilities的配置仍可执行，但标记undeclared，不能报告兼容性验证通过。
 
@@ -32,4 +32,4 @@ result必须满足当前schema，不是照抄空对象。producer可省略，记
 
 每个宿主的沙箱、挂载和环境变量机制不同，必须验证路径可达，凭据在实际执行进程接入，不打印值。跨机器不自动替换斜杠猜路径；改变运行配置须显式refresh复审。没有Skills发现机制的Agent可显式读取本SKILL再操作CLI；纯聊天无执行工具时不能生产文件。
 
-能力不足时仍可做不依赖该能力的操作，例如没有视觉能力可做合法零图文章。不能把协议兼容测试表述为所有Agent真实端到端通过。宿主安装方式与验证分层见docs/多Agent安装与兼容性.md。
+能力不足时仍可做不依赖该能力的操作，例如没有视觉能力可做合法零图文章；用户本轮明确选择direct_use的自动带图任务也无需视觉能力，但不记录视觉通过。不能把协议兼容测试表述为所有Agent真实端到端通过。宿主安装方式与验证分层见docs/多Agent安装与兼容性.md。

@@ -185,17 +185,17 @@ def test_untrusted_sidecar_cannot_authorize_external_upload(engine):
         engine._validate_image_plan(t,a,plan)
 
 
-def image_task(engine, count=1, *, limit_changes=None, pricing=None):
+def image_task(engine, count=1, *, limit_changes=None, pricing=None, image_review_policy='reviewed', visual=True):
     """Reach generation through genuine public state transitions and snapshots."""
     engine.settings['defaults'].update(image_ratio='4:3',image_dimensions=[32,24],image_format='png',image_text_policy='none')
     engine.settings['limits'].update(max_image_requests_per_task=10,max_generation_attempts_per_image=3)
     engine.settings['limits'].update(limit_changes or {})
     engine.settings['image_provider']={'adapter':'openai_compatible','model':'offline-fixture'}
-    engine.settings['host']['visual_capability']=True
-    engine.settings['host']['visual_verification_ref']='offline-fixture-only'
+    engine.settings['host']['visual_capability']=visual
+    if visual:engine.settings['host']['visual_verification_ref']='offline-fixture-only'
     engine.settings['reference_fallback']={'user_ref':'user:test-diagram-no-reference','strategy':'虚构离线测试的纯说明图，不出现产品'}
     if pricing is not None: engine.settings['image_pricing']=pricing
-    tid=analyze(engine)
+    tid=analyze(engine,image_review_policy=image_review_policy)
     legacy=engine.status(tid)
     legacy.pop('image_policy_version',None)
     engine._save(legacy)
@@ -210,6 +210,78 @@ def image_task(engine, count=1, *, limit_changes=None, pricing=None):
     submit(engine,tid,{'images':plans})
     assert engine.status(tid)['state']=='GENERATING_IMAGES'
     return tid
+
+
+def test_direct_use_is_explicit_automatic_task_choice(engine):
+    with pytest.raises(ValueError,match='自动模式'):
+        engine.start('test-product','learning',text_source='host',user_ref='user:learning',image_review_policy='direct_use')
+    ordinary=engine.start('test-product','automatic',text_source='host',user_ref='user:ordinary')
+    assert ordinary['image_review_policy']=='reviewed'
+    assert ordinary['authorization'].get('image_review_policy') is None
+    direct=engine.start('test-product','automatic',text_source='host',user_ref='user:skip-visual',image_review_policy='direct_use')
+    assert direct['image_review_policy']=='direct_use'
+    assert direct['authorization']['image_review_policy']=={'policy':'direct_use','user_ref':'user:skip-visual'}
+    with pytest.raises(ValueError,match='图片审核'):
+        engine.start('test-product','automatic',text_source='host',user_ref='user:typo',image_review_policy='unknown')
+
+
+def test_direct_use_is_exposed_to_host_start_form_and_cli():
+    from geo_article_studio.cli import parser
+    from geo_article_studio.host_bridge import form_for
+    form=form_for('开始任务',{}, {'mode':'automatic','text_source':'host','image_review_policy':'direct_use'})
+    assert form['values']['image_review_policy']=='direct_use'
+    assert form['choices']['image_review_policy']==['reviewed','direct_use']
+    args=parser().parse_args(['start','--mode','automatic','--text-source','host',
+                              '--image-review-policy','direct_use','--user-ref','user:current'])
+    assert args.image_review_policy=='direct_use'
+
+
+def test_direct_use_keeps_source_upload_authorization(engine):
+    engine.settings['defaults'].update(image_ratio='4:3',image_dimensions=[32,24],image_format='png',image_text_policy='none')
+    engine.settings['image_provider']={'adapter':'openai_compatible','model':'offline-fixture','supports_references':True,'max_reference_images':2}
+    engine.settings['limits']['max_image_requests_per_task']=2
+    tid=analyze(engine,image_review_policy='direct_use')
+    with pytest.raises(ValueError,match='产品图|参考图'):
+        engine.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[1]}],user_ref='user:select')
+
+
+def test_direct_use_routes_to_text_file_final_review_and_discloses_status(engine,monkeypatch):
+    from geo_article_studio.storage import file_hash
+    tid=image_task(engine,image_review_policy='direct_use',visual=False)
+    provider=mock_provider(monkeypatch,engine,tid)
+    generated=engine.run_image(tid)
+    assert len(provider.calls)==1
+    assert generated['state']=='FINAL_REVIEW'
+    receipt=generated['articles'][0]['results']['IMAGE_REVIEW']
+    assert receipt['status']=='skipped_by_user'
+    assert receipt['image_hashes']=={'A001_I01':generated['articles'][0]['images']['A001_I01']['hash']}
+    action=engine.next_action(tid)
+    assert action['kind']=='NEEDS_MODEL' and action['context']['image_review_policy']=='direct_use'
+    review=good_review('FINAL_REVIEW')
+    review['checks']=[c for c in review['checks'] if c['check_id']!='image_alignment']
+    submit(engine,tid,review)
+    result=engine.export(tid)
+    disclosure=Path(result)/'001'/'图片审核状态.txt'
+    assert '未做视觉审核' in disclosure.read_text(encoding='utf-8')
+    assert file_hash(disclosure)==engine.status(tid)['articles'][0]['published_files'][str(disclosure)]
+
+
+def test_direct_use_cannot_claim_visual_check_or_export_tampered_receipt(engine,monkeypatch):
+    tid=image_task(engine,image_review_policy='direct_use',visual=False)
+    mock_provider(monkeypatch,engine,tid)
+    engine.run_image(tid)
+    false_review=good_review('FINAL_REVIEW')
+    false_review['viewed_image_ids']=['A001_I01']
+    with pytest.raises(ValueError,match='视觉|未审核'):
+        submit(engine,tid,false_review)
+    good=good_review('FINAL_REVIEW')
+    good['checks']=[c for c in good['checks'] if c['check_id']!='image_alignment']
+    submit(engine,tid,good)
+    state=engine.status(tid)
+    state['articles'][0]['results']['IMAGE_REVIEW']['image_hashes']['A001_I01']='f'*64
+    engine._save(state)
+    with pytest.raises(ValueError,match='审核|哈希'):
+        engine.export(tid)
 
 
 class LedgerProvider:

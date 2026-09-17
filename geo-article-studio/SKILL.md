@@ -2,7 +2,7 @@
 name: geo-article-studio
 description: GEO图文生产助手，使用四个本地资料库生产文章和配图。启动触发词仅为“开始任务”和“配置任务”，用于用户选择本技能的场景；已启动任务中的后续回复继续当前流程。
 metadata:
-  compatibility: Requires Python 3.11+, file access, an execution tool, structured model responses and human confirmation. Automatic image tasks require verified visual capability. Agent-agnostic; no Hermes SDK dependency.
+  compatibility: Requires Python 3.11+, file access, an execution tool, structured model responses and human confirmation. Automatic image review requires verified visual capability; explicitly user-selected direct_use skips visual review and discloses this in output. Agent-agnostic; no Hermes SDK dependency.
 ---
 
 # GEO图文生产助手
@@ -31,7 +31,7 @@ metadata:
 
 图片中的少量文字不由用户预配置；IMAGE_PLANNING按文章标题、正文和平台决定是否使用文字。产品展示是统一硬规则：所有图片都必须使用当前版本已批准产品图并清楚展示产品。图片/文字调用上限留空时，在任务规模确定后估算并请用户确认，再允许付费调用。
 
-`form "开始任务"`返回本轮产品、学习/自动模式、文字来源、聊天范围和额外要求。已保存的`task_defaults`可预填目标、平台和目标AI，用户未要求修改时沿用，仍需展示；它不能预选本轮模式、文字来源或篇幅。每次必须展示两个文字选项：①当前Agent默认模型；②已配置第三方文字API（展示真实模型、不可用缺项）。说明选择API会发送当前所需文字上下文并可能收费，再让用户明确选择；不能继承上次选择或自动代选。CLI start和fork-revision必须传--text-source host或api，当前选择绑定任务；原任务续跑保留其选择。缺模式也让用户选择，无需另一条触发词。当前消息已给字段用form --file复用。主题、篇数、逐篇图数仍在分析后由真实用户输入。零图文章不要求图片API齐备；带图任务必须完成图片API配置和授权。
+`form "开始任务"`返回本轮产品、学习/自动模式、文字来源、聊天范围和额外要求。已保存的`task_defaults`可预填目标、平台和目标AI，用户未要求修改时沿用，仍需展示；它不能预选本轮模式、文字来源或篇幅。每次必须展示两个文字选项：①当前Agent默认模型；②已配置第三方文字API（展示真实模型、不可用缺项）。说明选择API会发送当前所需文字上下文并可能收费，再让用户明确选择；不能继承上次选择或自动代选。CLI start和fork-revision必须传--text-source host或api，当前选择绑定任务；原任务续跑保留其选择。缺模式也让用户选择，无需另一条触发词。当前消息已给字段用form --file复用。主题、篇数、逐篇图数仍在分析后由真实用户输入。零图文章不要求图片API齐备；带图任务必须完成图片API配置和授权。若用户明确要求“生成完直接用图/不审核图”，仅在自动模式的start传`--image-review-policy direct_use`；不从模型、资料或旧任务推断，也不把它写为长期默认。未明确选择时使用reviewed。
 
 `configure --file`合并保存非敏感配置；`index`增量索引；`products list/extract/candidates/facts/approve`管理明确版本的产品事实。展示来源后才根据真实用户批准事实。`rules import`导入正式规则，示例不算正式。密钥只用本地环境变量或宿主已有安全凭据，**允许聊天接收，但不回显或写普通JSON**。
 
@@ -44,11 +44,15 @@ metadata:
 3. NEEDS_MODEL：当前宿主模型执行此独立动作，把JSON文件交submit-result TASK_ID --file。审核使用reviewer=model，旧qwen值仅作向后兼容。可通过producer记录实际agent/model；该字段是自报信息而非强认证。不得让用户逐个手填模型JSON，不添加schema没有的字段。被拒绝后读取具体原因纠正，连续3次失败则pause并报告，不绕过程序。
 4. NEEDS_USER：展示对象、版本、内容哈希与结果并等待。学习模式逐步确认；修改调用revise并停在当前步骤，重新生成/审核后还必须完成LEARNING_REVIEW复盘，才能展示并批准。长期规则明确范围且人工批准后激活；actor/user_ref只能来自当前真实用户输入。
 5. 主题分析必须从聊天库真实客户记录中识别高频且影响决策的关注点，并生成互不重复的问题型钩子标题候选。让用户人工多选标题，再填每主题篇数及逐篇图数；多选即确认对应标题。目标、平台、目标AI、短篇/长文沿用开始任务时的人工选择，select --file提交。完整任务配置就是本轮自动生产授权，普通阶段连续推进，不反复询问继续。
-6. NEEDS_TOOL按tool运行run-text、reuse-analysis、run-image或export。ANALYZING出现reuse-analysis时，使用当前action_id和expected_revision运行`reuse-analysis TASK_ID --action-id ID --revision N`；执行层会复核缓存指纹、来源文件、事实和规则，随后仍停在人工选题及逐篇数量确认。缓存未命中或失效时按原流程由模型分析。host来源由当前宿主模型完成NEEDS_MODEL动作；api来源由run-text调用已配置第三方文字API。两条路径经过同一审核门，只有用户明确调用switch-text-source时才能切换。文字API不收图片，图像审核和带图最终联合审核仍由宿主实际看图；自动图文缺真实视觉能力即阻断，学习模式可由用户看图并提交human结果，不能写成AI已验。
+6. NEEDS_TOOL按tool运行run-text、reuse-analysis、run-image或export。ANALYZING出现reuse-analysis时，使用当前action_id和expected_revision运行`reuse-analysis TASK_ID --action-id ID --revision N`；执行层会复核缓存指纹、来源文件、事实和规则，随后仍停在人工选题及逐篇数量确认。缓存未命中或失效时按原流程由模型分析。host来源由当前宿主模型完成NEEDS_MODEL动作；api来源由run-text调用已配置第三方文字API。两条路径经过同一审核门，只有用户明确调用switch-text-source时才能切换。文字API不收图片。默认reviewed模式的图像审核和带图终审仍由宿主实际看图，缺真实视觉能力即阻断；学习模式可由用户看图并提交human结果。仅本轮明确选择direct_use的自动任务在图片文件全部通过技术校验后跳过视觉审核，终审只查正文和真实文件；不得写成AI或人工已看图。
 7. BLOCKED、错误、缺事实/规则、未知收费或上限时保存并说明缺项。pause/resume管理断点；图片UNKNOWN先核对再resolve-request/recover-image。视觉审核失败且额度耗尽时，仅在用户明确增加一次额度后调用authorize-image-retry，并只清理和重生成指定失败图。联网前的output_exists预检失败不计入调用额度。文字API仅按已保存且带真实用户引用的重试策略，在自动模式对内容拒绝和有限UNKNOWN执行预授权重试；没有预授权或超出次数时必须停下核对，禁止盲目重复收费。已有RECEIVED响应且内容阶段未变时run-text恢复提交不重新收费。配置/事实/规则变化用refresh重审，且refresh强制重新分析；新任务如需主动重新分析，start增加`--fresh-analysis`。已完成稿修改用fork-revision保留旧成品并重新选择文字来源。
 
 图片复核要区分人物的实际动作与二维遮挡造成的空间错位：只有确实踩踏、乘坐、抬举或操作才写入people_actions；重叠、透视和前后关系异常写入visual_rules，不确定时标needs_review。用户明确说当前图片可以通过时，以真实用户引用执行`accept-images TASK_ID --action-id ID --revision N --user-ref 引用`，由执行层原子记录当前图片哈希与人工结论并进入终审；该决定不增加图片调用、不修改长期规则、不覆盖未来图片版本。自动任务因修订临时进入学习确认时，当前图片获人工确认后恢复自动模式；原本学习模式不变。
 8. 全部计划完成后，**只向用户返回脚本给出的一条真实成品根目录绝对路径**。新成品根目录命名为`时间_产品名_三位序号`，篇内文件夹只用三位文章序号，禁止把文章标题塞进文件夹名。部分完成不伪称成功。
+
+## 自动带图生成即采用（仅显式选择）
+
+用户在开始任务明确要求“不审核图，生成完直接用图”时，自动模式传`--image-review-policy direct_use`，并保留当前真实用户引用。该选择仅适用于新建任务，默认reviewed和历史任务维持原流程。不能把用户明确要带图的任务改成零图，也不能让未看图的模型提交虚假IMAGE_REVIEW。执行层在图片全部落盘并完成文件校验后记录用户选择、图片ID和哈希，跳过IMAGE_REVIEW；FINAL_REVIEW只核对文字及文件，`viewed_image_ids=[]`且不提交`image_alignment`。成品每篇另有`图片审核状态.txt`注明“未做视觉审核”。图片外传授权、参考图借鉴范围、图片接口/3:4技术约束、请求次数和未知收费处理仍须完成；20MB输入图片限制不会因免审消失。已经启动的reviewed任务不能由模型或配置暗中切换，需用户明确新建direct_use任务。
 
 ## 内置GEO标准（所有新任务强制执行）
 
@@ -64,9 +68,9 @@ metadata:
 
 每篇写完依次执行三个独立动作：FACT_REVIEW事实检查 → GEO_REVIEW标题与结构检查 → CONTENT_REVIEW内容与合规检查。每轮逐项给证据，失败回写作并重走三轮；不合并成一句“审核通过”。学习模式逐轮人工确认。正文反馈会重新策划、写稿、三轮审核，再复盘和人工确认；仅批准新大纲不能算正文问题解决。
 
-普通文章建议2–4张，人工填写的实际数量优先（含明确选择0张）。恰好4张时顺序为封面→内容总结→真实使用场景→产品/总结，role依次cover/content_summary/real_scene/product_summary；每张layout=single。所有配图固定宽:高3:4竖版，现代、真实自然、生活化和简洁。默认auto文字策略下尽量加字：每篇至少一张图加入直接摘自标题或正文的短文案，优先封面或内容总结图；每张最多16个非空白字符和两行。执行层从结构化计划重建最终生图提示词，只加入`只显示文字“<allowed_text>”，不要添加其他文字`，不直接发送模型提交的自由prompt；真实场景不适合时该张可留空。每张必须show_product=true，并同时引用一张当前版本已批准产品图和一张相关参考图库图片；两张输入图须在同一次多图编辑请求中生成完整场景。产品图只确定产品外观、结构、颜色、部件与Logo，参考图只借鉴获准的构图、机位、真实尺度、光线、空间层次与生活化风格。禁止background_composite、先生成背景再贴产品及无参考图的写实产品场景；接口必须支持至少两张输入图，缺少合格来源、借鉴授权或多图能力时在付费请求前阻断。提示词必须根据绑定的文章段落编写，写明两张实际输入图片的文件名、用途边界、保持产品不变、统一消失点、相机高度、真实尺度、地面接触和遮挡关系，并要求产品与场景完成光影融合；光影须匹配主光方向、色温、环境反光、接触阴影、投影、边缘色溢、景深和颗粒，不得重绘产品结构或Logo。服务商未按请求返回精确3:4时，执行层保留完整画面等比缩放并居中补边到目标尺寸，记录原始尺寸和处理方式，禁止裁切产品或把近似比例直接交付。逐张生成独立文件，实际把成图与产品基准图、参考图一起查看；文字还须与allowed_text逐字一致、清晰且无乱码；人物/车辆尺度不实、透视冲突、轮子悬浮或陷地、阴影方向不一致、边缘白边/发光、简单贴图感、错款或Logo错误均判失败。生成的场景图不得冒称真实客户照片。
+普通文章建议2–4张，人工填写的实际数量优先（含明确选择0张）。恰好4张时顺序为封面→内容总结→真实使用场景→产品/总结，role依次cover/content_summary/real_scene/product_summary；每张layout=single。所有配图固定宽:高3:4竖版，现代、真实自然、生活化和简洁。默认auto文字策略下尽量加字：每篇至少一张图加入直接摘自标题或正文的短文案，优先封面或内容总结图；每张最多16个非空白字符和两行。执行层从结构化计划重建最终生图提示词，只加入`只显示文字“<allowed_text>”，不要添加其他文字`，不直接发送模型提交的自由prompt；真实场景不适合时该张可留空。每张必须show_product=true，并同时引用一张当前版本已批准产品图和一张相关参考图库图片；两张输入图须在同一次多图编辑请求中生成完整场景。产品图只确定产品外观、结构、颜色、部件与Logo，参考图只借鉴获准的构图、机位、真实尺度、光线、空间层次与生活化风格。禁止background_composite、先生成背景再贴产品及无参考图的写实产品场景；接口必须支持至少两张输入图，缺少合格来源、借鉴授权或多图能力时在付费请求前阻断。提示词必须根据绑定的文章段落编写，写明两张实际输入图片的文件名、用途边界、保持产品不变、统一消失点、相机高度、真实尺度、地面接触和遮挡关系，并要求产品与场景完成光影融合；光影须匹配主光方向、色温、环境反光、接触阴影、投影、边缘色溢、景深和颗粒，不得重绘产品结构或Logo。服务商未按请求返回精确3:4时，执行层保留完整画面等比缩放并居中补边到目标尺寸，记录原始尺寸和处理方式，禁止裁切产品或把近似比例直接交付。逐张生成独立文件；默认reviewed模式实际把成图与产品基准图、参考图一起查看；文字还须与allowed_text逐字一致、清晰且无乱码；人物/车辆尺度不实、透视冲突、轮子悬浮或陷地、阴影方向不一致、边缘白边/发光、简单贴图感、错款或Logo错误均判失败。生成的场景图不得冒称真实客户照片。
 
-新任务还须落实图文匹配：每张图片计划填写正文逐字摘录的content_anchors、把该信息转为可见画面的visual_mapping、visual_kind以及海报的reference_style。两张及以上至少一张是信息海报，不能全部是只有产品和环境的场景照；多图各讲不同正文要点。借鉴参考图库的海报标题层级、图形强调、配色和信息卡片时，将`视觉风格`列入borrow且核对该参考图的人工授权，不能继承旧文案、旧产品或未经批准的主张。图文海报可用最多四行、每行16字的正文原句；含数字必须绑定批准事实。IMAGE_REVIEW须额外逐图检查content_visualization和reference_style，实际看见正文要点与参考风格才可通过，泛化标题或只换背景都判不匹配。已完成成品的修订必须输出新目录，保留旧目录。
+新任务还须落实图文匹配：每张图片计划填写正文逐字摘录的content_anchors、把该信息转为可见画面的visual_mapping、visual_kind以及海报的reference_style。两张及以上至少一张是信息海报，不能全部是只有产品和环境的场景照；多图各讲不同正文要点。借鉴参考图库的海报标题层级、图形强调、配色和信息卡片时，将`视觉风格`列入borrow且核对该参考图的人工授权，不能继承旧文案、旧产品或未经批准的主张。图文海报可用最多四行、每行16字的正文原句；含数字必须绑定批准事实。默认reviewed模式的IMAGE_REVIEW须额外逐图检查content_visualization和reference_style，实际看见正文要点与参考风格才可通过，泛化标题或只换背景都判不匹配。已完成成品的修订必须输出新目录，保留旧目录。
 
 自动模式逐图审核失败时应在结果中准确列出`failed_image_ids`。执行层只在已授权总调用额度、单图尝试次数和收费状态都允许时保留其他合格图片、归档失败图并自动回到IMAGE_PLANNING重做失败图；重做后重新看全部成图。不确定的图片标needs_review，额度不足或未知收费状态暂停，不能盲目重试。
 
@@ -74,7 +78,7 @@ metadata:
 
 先核对实际shell，每个含空格的路径独立引用。Windows宿主也可能用Git Bash；不要混用PowerShell的&和bash。CLI参数以--help为准，不猜--trigger或--workspace。
 
-不自动发布、定时、联网补产品参数或改写源库。不得修改本技能代码规避审核。按需读取 [流程](references/workflow.md)、[数据契约](references/data_contracts.md)、[规则](references/rules.md)、[图片协议](docs/图片接口适配说明.md)。验证与限制见 [验收记录](docs/验收记录.md)；离线demo全部为虚构测试，不能当真实模型、视觉或图片API联调。
+不自动发布、定时、联网补产品参数或改写源库。不得私自修改代码或伪造审核记录；仅用户本轮明确选择内置direct_use可免视觉审核。按需读取 [流程](references/workflow.md)、[数据契约](references/data_contracts.md)、[规则](references/rules.md)、[图片协议](docs/图片接口适配说明.md)。验证与限制见 [验收记录](docs/验收记录.md)；离线demo全部为虚构测试，不能当真实模型、视觉或图片API联调。
 
 
 ## v1.4.3 凭据接收规则（优先于历史示例）

@@ -34,7 +34,7 @@ def form_for(trigger,settings,provided=None,*,config_path=None,persisted=None):
         result=configuration_form(settings,p,config_path=config_path,persisted=persisted)
         result['text_options']=[{'value':'host','label':'当前Agent默认模型','available':True},{'value':'api','label':'第三方文字API','model':text_config.get('model'),'available':text_check['ok'],'missing':text_check['errors']}]
         return result
-    values={'product':product,'mode':defaults.get('mode'),'text_source':None,'chat_scope':'当前产品相关记录及标注的通用品类记录','extra_requirements':''}; required=['product','mode','text_source']
+    values={'product':product,'mode':defaults.get('mode'),'text_source':None,'image_review_policy':'reviewed','chat_scope':'当前产品相关记录及标注的通用品类记录','extra_requirements':''}; required=['product','mode','text_source']
     task_defaults=settings.get('task_defaults') or {}
     values.update(goals=copy.deepcopy(task_defaults.get('goals')),
                   platforms=copy.deepcopy(task_defaults.get('platforms')),
@@ -44,10 +44,10 @@ def form_for(trigger,settings,provided=None,*,config_path=None,persisted=None):
     if set(p)-set(values):raise ValueError('预填含未知表单字段')
     values.update(p)
     return {'action':action,'values':values,'missing':[k for k in required if values.get(k) in (None,'',[])],
-            'sections':sections,'choices':{'mode':['learning','automatic'],'text_source':['host','api'],'goals':GOALS,'platforms':PLATFORMS,'target_ais':TARGET_AIS,'article_type':['short','long']} if action=='start' else {},
+            'sections':sections,'choices':{'mode':['learning','automatic'],'text_source':['host','api'],'image_review_policy':['reviewed','direct_use'],'goals':GOALS,'platforms':PLATFORMS,'target_ais':TARGET_AIS,'article_type':['short','long']} if action=='start' else {},
             'text_options':[{'value':'host','label':'当前Agent默认模型','available':True},{'value':'api','label':'第三方文字API','model':text_config.get('model'),'available':text_check['ok'],'missing':text_check['errors']}],
             'title_generation':{'source':'chat_analysis','format':'question_hook','confirmation':'topic_multi_select','notice':'标题由Agent分析聊天库中的真实客户关注点后生成问题型钩子候选；用户多选即确认标题，再填写各主题文章数和逐篇图片数。'},
-            'text_notice':'文字API配置长期保存；每次任务明确选择来源。选择API将发送有限文字上下文并可能收费，失败不自动改用宿主。图片视觉审核仍由已验证宿主能力完成。',
+            'text_notice':'文字API配置长期保存；每次任务明确选择来源。选择API将发送有限文字上下文并可能收费，失败不自动改用宿主。带图自动任务默认需要已验证视觉能力；仅用户明确选择direct_use时生成即采用，并在成品标记未做视觉审核。',
             'credential_notice':'API Key可由用户在当前聊天中主动提供并注明用途与模型，Agent随后自动接入安全凭据或环境变量；不得回显或写入普通配置、源码、日志和Git。'}
 
 def obj(properties,required=None):

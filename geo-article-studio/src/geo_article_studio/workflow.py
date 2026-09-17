@@ -119,10 +119,12 @@ class Engine:
             else:rows.extend(self.index.search('',library_type=lib,product_id=product['product_id'],limit=30,**filters))
         return {r['source_id']:r for r in rows}
 
-    def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements='',text_source=None,geo_brief=None,reuse_analysis=True):
+    def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements='',text_source=None,geo_brief=None,reuse_analysis=True,image_review_policy='reviewed'):
         require_user(actor,user_ref)
         require_declared_capabilities(self.settings,mode=mode)
         if mode not in ('automatic','learning'): raise ValueError('模式必须为learning或automatic')
+        if image_review_policy not in ('reviewed','direct_use'):raise ValueError('图片审核方式必须为reviewed或direct_use')
+        if image_review_policy=='direct_use' and mode!='automatic':raise ValueError('生成即采用仅支持自动模式')
         if text_source not in ('host','api'):raise ValueError('请选择当前宿主或第三方文字API')
         if text_source=='api' and not api_resolution_ready(self.settings,'text'):raise ValueError('第三方文字模型的接口协议尚未由Agent核对完成，请先完成技术配置')
         if text_source=='api' and not TextProvider(self.settings.get('text_provider')).check()['ok']:raise ValueError('第三方文字API未配置完整或凭据未接入，请先配置任务')
@@ -134,7 +136,7 @@ class Engine:
         tid=uuid.uuid4().hex[:16]
         t={'task_id':tid,'product':product,'mode':mode,'state':'PREFLIGHT','stage':'PREFLIGHT','revision':0,'current_article':0,'articles':[],'topics':[],
            'sources':sources,'facts':facts,'coverage':report,'chat_scope':scope,'extra_requirements':extra_requirements,'results':{},'history':[],'approvals':[],'feedback':[],
-           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'image_text_policy_version':editorial.IMAGE_TEXT_POLICY_VERSION,'article_image_policy_version':editorial.ARTICLE_IMAGE_POLICY_VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'analysis_cache_bypass':not reuse_analysis,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
+           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'image_text_policy_version':editorial.IMAGE_TEXT_POLICY_VERSION,'article_image_policy_version':editorial.ARTICLE_IMAGE_POLICY_VERSION,'image_review_policy':image_review_policy,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'analysis_cache_bypass':not reuse_analysis,'authorization':{'start_user_ref':user_ref,'text_source':text_source,**({'image_review_policy':{'policy':'direct_use','user_ref':user_ref}} if image_review_policy=='direct_use' else {})},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
         with self._lock(tid): return self._save(t)
 
     def _check_action(self,t,aid,revision):
@@ -166,11 +168,11 @@ class Engine:
             if state=='COMPLETED': kind='FINISHED'
             elif state in ('PAUSED','PARTIAL','WAITING_APPROVAL','WAITING_SELECTION','WAITING_COUNTS','NEEDS_CONFIG'): kind='NEEDS_USER'
             elif stage in ('GENERATING_IMAGES','EXPORT'): kind='NEEDS_TOOL'
-            elif stage in ('IMAGE_REVIEW','FINAL_REVIEW') and a and a['image_count'] and not visual_available(self.settings):
+            elif stage in ('IMAGE_REVIEW','FINAL_REVIEW') and a and a['image_count'] and t.get('image_review_policy')!='direct_use' and not visual_available(self.settings):
                 kind='NEEDS_USER' if t['mode']=='learning' else 'BLOCKED'
             else: kind='NEEDS_MODEL'
             if reflection: kind='NEEDS_MODEL'
-            host_contract=assess_host(self.settings,stage=stage,mode=t['mode'],has_images=bool(a and a['image_count']))
+            host_contract=assess_host(self.settings,stage=stage,mode=t['mode'],has_images=bool(a and a['image_count'] and t.get('image_review_policy')!='direct_use'))
             if state not in ('COMPLETED','PAUSED','PARTIAL') and host_contract['verification']=='declared_only' and not host_contract['ready']:kind='BLOCKED'
             if stage=='ANALYZING' and kind in ('NEEDS_MODEL','NEEDS_TOOL'):
                 key=self._analysis_key(t)
@@ -210,6 +212,7 @@ class Engine:
             if t.get('editorial_version'):
                 context['editorial_standards']=editorial.STANDARDS
                 context['geo_brief']=a.get('geo_brief') if a else t.get('geo_brief')
+            context['image_review_policy']=t.get('image_review_policy','reviewed')
             if stage in ('IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW') and a and a['image_count']:
                 refs={sid for p in a['results'].get('IMAGE_PLANNING',{}).get('images',[]) for sid in p['reference_image_ids']+p['product_image_ids']}
                 context['visual_inputs']={'generated':a['images'],'references':[{'source_id':sid,'path':str(self._source_path(t['sources'][sid])),'hash':t['sources'][sid]['hash']} for sid in refs],'capability_verification_ref':self.settings.get('host',{}).get('visual_verification_ref')}
@@ -296,7 +299,7 @@ class Engine:
                                and auth.get('user_ref') and auth.get('hash')==row['hash']
                                and isinstance(auth.get('allow_borrow'),list) and auth['allow_borrow'] for row in reference_rows):
                         missing.append('参考图库缺少已批准外传且明确借鉴范围的场景参考图')
-                if t['mode']=='automatic' and (not visual_available(self.settings) or not self.settings.get('host',{}).get('visual_verification_ref')): missing.append('host.visual_capability及真实视觉能力证明')
+                if t['mode']=='automatic' and t.get('image_review_policy')!='direct_use' and (not visual_available(self.settings) or not self.settings.get('host',{}).get('visual_verification_ref')): missing.append('host.visual_capability及真实视觉能力证明')
             if missing: raise ValueError('仅需补齐：'+', '.join(missing))
             t['rules_snapshot']=self.rules.snapshot(t['product']['product_id']);self._check_snapshot(t)
             if num:
@@ -347,7 +350,7 @@ class Engine:
                 receipt=next((r for r in t.get('text_requests',[]) if r['request_id']==_text_request_id),None)
                 if not receipt or receipt['status']!='RECEIVED' or receipt['action_id']!=action_id or receipt['revision']!=revision or receipt.get('result')!=result:raise ValueError('本任务选择文字API；必须由run-text取得结果，不能由宿主替代')
                 receipt['status']='APPLIED'
-            require_declared_capabilities(self.settings,stage=actual_stage,mode=t['mode'],has_images=bool(a and a['image_count']))
+            require_declared_capabilities(self.settings,stage=actual_stage,mode=t['mode'],has_images=bool(a and a['image_count'] and t.get('image_review_policy')!='direct_use'))
             if producer:t.setdefault('model_submissions',[]).append({'action_id':action_id,'revision':revision,'stage':actual_stage,'producer':producer,'identity_verification':'self_reported','at':now()})
             if reflection:
                 if actor!='model': raise ValueError('复盘由当前宿主模型整理，不能伪造人工批准')
@@ -377,8 +380,8 @@ class Engine:
                 if stage in ('TEXT_REVIEW',*editorial.REVIEW_STAGES):
                     issues=check_text(a['results']['WRITING'],t['facts'],self._applicable(t,a),[t['product']['name']])
                     if issues: raise ValueError('正式文本校验失败')
-                passed=validate_review(stage,result,visual_capable=visual_available(self.settings),has_images=bool(a['image_count']),mode=t['mode'],article_visual=t.get('article_image_policy_version')==editorial.ARTICLE_IMAGE_POLICY_VERSION)
-                if stage in ('IMAGE_REVIEW','FINAL_REVIEW') and a['image_count']:
+                passed=validate_review(stage,result,visual_capable=visual_available(self.settings),has_images=bool(a['image_count']),mode=t['mode'],article_visual=t.get('article_image_policy_version')==editorial.ARTICLE_IMAGE_POLICY_VERSION,image_review_policy=t.get('image_review_policy','reviewed'))
+                if stage in ('IMAGE_REVIEW','FINAL_REVIEW') and a['image_count'] and t.get('image_review_policy')!='direct_use':
                     if set(result['viewed_image_ids'])!=set(a['images']): raise ValueError('视觉审核未覆盖当前实际图片')
                 if stage=='IMAGE_REVIEW' and result.get('failed_image_ids'):
                     if result['verdict']!='failed' or not set(result['failed_image_ids']).issubset(set(a['images'])) or len(set(result['failed_image_ids']))!=len(result['failed_image_ids']):
@@ -434,7 +437,12 @@ class Engine:
     def _advance(self,t):
         stage=t['stage'];a=self._article(t)
         next_stage={'PREFLIGHT':'ANALYZING','PLANNING':'WRITING','WRITING':'FACT_REVIEW' if t.get('editorial_version') else 'TEXT_REVIEW','FACT_REVIEW':'GEO_REVIEW','GEO_REVIEW':'CONTENT_REVIEW','CONTENT_REVIEW':'IMAGE_PLANNING' if a and a['image_count'] else 'FINAL_REVIEW','TEXT_REVIEW':'IMAGE_PLANNING' if a and a['image_count'] else 'FINAL_REVIEW',
-                    'IMAGE_PLANNING':'GENERATING_IMAGES','GENERATING_IMAGES':'IMAGE_REVIEW','IMAGE_REVIEW':'FINAL_REVIEW','FINAL_REVIEW':'EXPORT'}[stage]
+                    'IMAGE_PLANNING':'GENERATING_IMAGES','GENERATING_IMAGES':'FINAL_REVIEW' if t.get('image_review_policy')=='direct_use' else 'IMAGE_REVIEW','IMAGE_REVIEW':'FINAL_REVIEW','FINAL_REVIEW':'EXPORT'}[stage]
+        if stage=='GENERATING_IMAGES' and t.get('image_review_policy')=='direct_use':
+            if len(a['images'])!=a['image_count'] or not a['images']:raise ValueError('生成即采用要求全部图片实际落盘')
+            a['results']['IMAGE_REVIEW']={'status':'skipped_by_user','policy':'direct_use',
+                'user_ref':t['authorization']['image_review_policy']['user_ref'],
+                'image_hashes':{image_id:image['hash'] for image_id,image in a['images'].items()},'at':now()}
         t['stage']=t['state']=next_stage
         if next_stage=='ANALYZING':t['analysis_input_fingerprint']=self._analysis_key(t)
 
@@ -776,6 +784,12 @@ class Engine:
             if t['state']!='EXPORT': raise ValueError('尚未通过当前文章终审')
             self._check_snapshot(t);a=self._article(t)
             if len(a['images'])!=a['image_count']: raise ValueError('图片文件数与任务不符')
+            if t.get('image_review_policy')=='direct_use' and a['image_count']:
+                receipt=a['results'].get('IMAGE_REVIEW',{})
+                if (receipt.get('status')!='skipped_by_user' or receipt.get('policy')!='direct_use'
+                    or receipt.get('user_ref')!=t['authorization'].get('image_review_policy',{}).get('user_ref')
+                    or receipt.get('image_hashes')!={image_id:image['hash'] for image_id,image in a['images'].items()}):
+                    raise ValueError('图片免视觉审核记录与当前图片哈希不一致')
             if t.get('editorial_version'):
                 editorial.validate_draft(a['results']['WRITING'],a['results']['PLANNING'],a['geo_brief'])
                 for review_stage in editorial.REVIEW_STAGES:
@@ -786,6 +800,8 @@ class Engine:
                 self._save(t)
             staging=self._path(tid)/'staging'/a['article_id']/f'v{a["revision"]}';staging.mkdir(parents=True,exist_ok=True)
             text=a['results']['WRITING'];(staging/'标题.txt').write_text(text['title'],encoding='utf-8');(staging/'正文.txt').write_text(text['body'],encoding='utf-8')
+            if t.get('image_review_policy')=='direct_use' and a['image_count']:
+                (staging/'图片审核状态.txt').write_text('本任务由用户明确选择“生成即采用”：图片未做视觉审核。文章文字与图片文件完成程序规定的校验；请在发布前自行核对图片内容、产品外观和图中文字。',encoding='utf-8')
             for i,plan in enumerate(a['results'].get('IMAGE_PLANNING',{}).get('images',[]),1):
                 im=a['images'][plan['image_id']]
                 if im['body_hash']!=digest(text) or im['plan_hash']!=digest(plan): raise ValueError('正文或图像计划已变化，图片失效')

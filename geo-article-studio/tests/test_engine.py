@@ -43,8 +43,8 @@ def submit(e,tid,result,actor='model'):
     a=e.next_action(tid)
     return e.submit(tid,a['action_id'],a['expected_revision'],result,actor=actor,user_ref='user:test' if actor=='user' else None)
 
-def analyze(e,mode='automatic'):
-    t=e.start('test-product',mode,text_source='host',user_ref='user:start'); tid=t['task_id']
+def analyze(e,mode='automatic',**start_options):
+    t=e.start('test-product',mode,text_source='host',user_ref='user:start',**start_options); tid=t['task_id']
     submit(e,tid,{'understanding':'虚构测试','source_ids':['S1'],'gaps':[]})
     if mode=='learning':
         a=e.next_action(tid);e.approve(tid,a['action_id'],a['expected_revision'],user_ref='user:approve')

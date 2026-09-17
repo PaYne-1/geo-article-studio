@@ -78,11 +78,12 @@ def _article_manifest(root,expected_images):
     files={}; images=[]
     for path in root.iterdir():
         if path.is_symlink() or not path.is_file(): raise ValueError('成品包含非法文件或目录')
-        if path.name in {'标题.txt','正文.txt'}:
+        if path.name in {'标题.txt','正文.txt','图片审核状态.txt'}:
             try: content=path.read_text(encoding='utf-8')
             except UnicodeError: raise ValueError('正文和标题必须为 UTF-8') from None
             if not content.strip() or content.startswith('\ufeff'): raise ValueError('标题正文不能为空或包含 BOM')
             if path.name=='标题.txt' and len(content.strip().splitlines())!=1: raise ValueError('只允许一个最终标题')
+            if path.name=='图片审核状态.txt' and '未做视觉审核' not in content:raise ValueError('图片审核状态说明无效')
             files[path.name]={'hash':file_hash(path),'bytes':path.stat().st_size}
         elif re.fullmatch(r'配图_[0-9]{2,}\.(png|jpg|jpeg|webp)',path.name):
             info=validate_image(path)

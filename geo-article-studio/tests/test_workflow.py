@@ -37,11 +37,12 @@ def test_builtin_rules_allow_production_and_custom_import_scope_and_rollback(tmp
     assert proposal['rule_id'] not in {r['rule_id'] for r in store.applicable('test-product',article_id='A001')}
 
 
-def test_builtin_rules_upgrade_migrates_old_hash_and_preserves_custom_rules(tmp_path):
+@pytest.mark.parametrize('old_version',['geo-editorial.user-confirmed.v4','geo-editorial.user-confirmed.v7'])
+def test_builtin_rules_upgrade_migrates_old_hash_and_preserves_custom_rules(tmp_path,old_version):
     from geo_article_studio.learning import RuleStore
     from geo_article_studio.storage import atomic_json
     store=RuleStore(tmp_path)
-    old=store._builtin();old['imports'][0]['hash']='0'*64;old['imports'][0]['source_version']='geo-editorial.user-confirmed.v4'
+    old=store._builtin();old['imports'][0]['hash']='0'*64;old['imports'][0]['source_version']=old_version
     old['rules'].append({'rule_id':'CUSTOM','scope':'global','target_id':None,'type':'writing_preference','content':'保留自定义规则','check_method':'人工检查','severity':'medium','status':'active','version':2,'activated_at':'test','user_ref':'user:custom'})
     atomic_json(store.path,old)
     upgraded=RuleStore(tmp_path).snapshot('test-product')
