@@ -30,8 +30,9 @@ def parser():
     c=command('host-check');c.add_argument('--file',type=Path);c.add_argument('--stage',choices=HOST_STAGES,default='PREFLIGHT');c.add_argument('--mode',choices=['automatic','learning'],default='automatic');c.add_argument('--with-images',action='store_true')
     command('configure',file=True);command('doctor');command('index')
     c=command('search');c.add_argument('query');c.add_argument('--library',choices=list(DEFAULT_SETTINGS['libraries']));c.add_argument('--product-id');c.add_argument('--limit',type=int,default=10)
-    c=command('start',user=True);c.add_argument('--product-id');c.add_argument('--mode',choices=['automatic','learning'],required=True);c.add_argument('--text-source',choices=['host','api'],required=True);c.add_argument('--brief-file',type=Path);c.add_argument('--scope-file',type=Path);c.add_argument('--requirements-file',type=Path)
+    c=command('start',user=True);c.add_argument('--product-id');c.add_argument('--mode',choices=['automatic','learning'],required=True);c.add_argument('--text-source',choices=['host','api'],required=True);c.add_argument('--brief-file',type=Path);c.add_argument('--scope-file',type=Path);c.add_argument('--requirements-file',type=Path);c.add_argument('--fresh-analysis',action='store_true',help='强制重新分析聊天资料，不复用同一输入的历史分析')
     for name in ('status','next-action','run-image','run-text','export'):command(name,task=True)
+    c=command('reuse-analysis',task=True);c.add_argument('--action-id',required=True);c.add_argument('--revision',type=int,required=True)
     c=command('resolve-text-request',task=True,user=True);c.add_argument('request_id')
     c=command('switch-text-source',task=True,user=True);c.add_argument('--text-source',choices=['host','api'],required=True)
     c=command('authorize-image-retry',task=True,user=True);c.add_argument('image_id');c.add_argument('--new-cap',type=int,required=True)
@@ -164,12 +165,13 @@ def run(args):
             found=[x for x in products.list_products() if x['name']==settings['default_product_name']]
             if len(found)!=1:raise ValueError('默认产品'+settings['default_product_name']+'尚未注册或版本不唯一；请选择实际产品，禁止替换为其他产品')
             pid=found[0]['product_id']
-        result=e.start(pid,args.mode,user_ref=args.user_ref,text_source=args.text_source,geo_brief=read_json(args.brief_file) if args.brief_file else None,chat_scope=read_json(args.scope_file) if args.scope_file else None,extra_requirements=args.requirements_file.read_text(encoding='utf-8') if args.requirements_file else '')
+        result=e.start(pid,args.mode,user_ref=args.user_ref,text_source=args.text_source,geo_brief=read_json(args.brief_file) if args.brief_file else None,chat_scope=read_json(args.scope_file) if args.scope_file else None,extra_requirements=args.requirements_file.read_text(encoding='utf-8') if args.requirements_file else '',reuse_analysis=not args.fresh_analysis)
     elif cmd in ('status','next-action','run-image','run-text','export'):
         result=getattr(e,cmd.replace('-','_'))(args.task_id)
         if cmd=='export':return result if result else {'state':'PLANNING','note':'当前篇已交付；继续next-action完成剩余文章'},0
         if cmd=='next-action' and result['kind']=='FINISHED':return result['output_path'],0
     elif cmd=='select':result=e.select(args.task_id,read_json(args.file),user_ref=args.user_ref)
+    elif cmd=='reuse-analysis':result=e.reuse_analysis(args.task_id,args.action_id,args.revision)
     elif cmd=='submit-result':
         envelope=read_json(args.file)
         if set(envelope)-{'action_id','expected_revision','result','actor','user_ref','protocol','producer'}:raise ValueError('提交信封含未知字段')

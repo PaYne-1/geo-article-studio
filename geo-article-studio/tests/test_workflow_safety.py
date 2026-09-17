@@ -7,6 +7,85 @@ import pytest
 from test_engine import engine, analyze, submit, good_review, reflect
 
 
+def start_second_analysis(engine, **start_options):
+    task=engine.start('test-product','automatic',text_source='host',user_ref='user:repeat',**start_options)
+    tid=task['task_id']
+    submit(engine,tid,{'understanding':'虚构测试','source_ids':['S1'],'gaps':[]})
+    return tid,engine.next_action(tid)
+
+
+def test_identical_analysis_is_reused_but_still_waits_for_human_topic_selection(engine):
+    original=analyze(engine)
+    tid,action=start_second_analysis(engine)
+    assert action['kind']=='NEEDS_TOOL' and action['tool']=='reuse-analysis'
+    reused=engine.reuse_analysis(tid,action['action_id'],action['expected_revision'])
+    assert reused['state']=='WAITING_SELECTION'
+    assert reused['topics']==engine.status(original)['topics']
+    assert reused['articles']==[]
+    assert reused['history'][-1]['reason']=='analysis_cache_reused'
+    assert reused['history'][-1]['source_task_id']==original
+    assert action['input_refs']==[] and action['prompt_template']==''
+    with pytest.raises(ValueError,match='过期|版本'):
+        engine.reuse_analysis(tid,action['action_id'],action['expected_revision'])
+
+
+def test_fresh_analysis_and_explicit_refresh_bypass_cache(engine):
+    analyze(engine)
+    _,action=start_second_analysis(engine,reuse_analysis=False)
+    assert action['kind']=='NEEDS_MODEL' and action['tool'] is None
+    task=engine.start('test-product','automatic',text_source='host',user_ref='user:refresh')
+    refreshed=engine.refresh(task['task_id'],user_ref='user:refresh')
+    submit(engine,refreshed['task_id'],{'understanding':'虚构测试','source_ids':['S1'],'gaps':[]})
+    action=engine.next_action(refreshed['task_id'])
+    assert action['kind']=='NEEDS_MODEL' and action['tool'] is None
+
+
+def test_analysis_cache_survives_engine_restart(engine):
+    analyze(engine)
+    restarted=engine.__class__(engine.settings,index=engine.index,products=engine.products)
+    _,action=start_second_analysis(restarted)
+    assert action['kind']=='NEEDS_TOOL' and action['tool']=='reuse-analysis'
+
+
+@pytest.mark.parametrize('change',['source','facts','rules','config','scope','requirements'])
+def test_analysis_cache_misses_when_any_protected_input_changes(engine,tmp_path,monkeypatch,change):
+    analyze(engine)
+    options={}
+    if change=='source':
+        from geo_article_studio.storage import file_hash
+        path=tmp_path/'source.txt';path.write_text('虚构测试问题：另一种收纳担忧',encoding='utf-8')
+        engine.index.row['hash']=file_hash(path)
+        engine.index.row['snippet']='客户：另一种收纳担忧'
+    elif change=='facts':
+        monkeypatch.setattr(engine.products,'facts',lambda *_args,**_kwargs:[
+            {'fact_id':'F2','status':'approved','text':'虚构测试批准事实','source_ids':[]}])
+    elif change=='rules':
+        update=tmp_path/'more-rules.json'
+        update.write_text(json.dumps({'formal':True,'version':'2','rules':[
+            {'rule_id':'R2','scope':'global','target_id':None,'type':'writing_preference',
+             'content':'只用于离线测试的新规则','check_method':'人工核对','severity':'medium'}]},ensure_ascii=False),encoding='utf-8')
+        engine.rules.import_file(update,user_ref='user:change-rules')
+    elif change=='config':engine.settings['defaults']['article_length']['max']=999
+    elif change=='scope':options['chat_scope']={'query':'收纳'}
+    else:options['extra_requirements']='本轮测试的额外写作要求'
+    _,action=start_second_analysis(engine,**options)
+    assert action['kind']=='NEEDS_MODEL' and action['tool'] is None
+
+
+def test_analysis_cache_rejects_tampered_cached_result(engine):
+    analyze(engine)
+    tid,action=start_second_analysis(engine)
+    assert action['tool']=='reuse-analysis'
+    from geo_article_studio.storage import read_json,atomic_json
+    record=next((engine.root/'analysis-cache').glob('*.json'))
+    cached=read_json(record)
+    cached['result']['topics'][0]['question_summary']='伪造缓存标题'
+    atomic_json(record,cached)
+    with pytest.raises(ValueError,match='缓存'):
+        engine.reuse_analysis(tid,action['action_id'],action['expected_revision'])
+    assert engine.status(tid)['state']=='ANALYZING'
+
+
 def finish_text(engine):
     tid=analyze(engine)
     engine.select(tid,[{'topic_id':'T1','article_count':1,'image_counts':[0]}],user_ref='user:select')

@@ -14,6 +14,7 @@ from .host_bridge import SCHEMAS, validate_result
 from .review import check_text, validate_review
 from .hosts import PROTOCOL, assess_host, require_declared_capabilities, visual_available, producer_identity
 from .text_api import TextProvider, uses_text_api
+from .analysis_cache import AnalysisCache, fingerprint as analysis_fingerprint
 from . import editorial
 from .config import api_resolution_ready
 
@@ -78,7 +79,10 @@ class Engine:
         if products is None:
             from .products import ProductRegistry
             products=ProductRegistry(settings,index)
-        self.index=index;self.products=products;self.rules=RuleStore(self.root,simulation=simulation);self.simulation=simulation
+        self.index=index;self.products=products;self.rules=RuleStore(self.root,simulation=simulation);self.analysis_cache=AnalysisCache(self.root);self.simulation=simulation
+
+    def _analysis_key(self,t):
+        return analysis_fingerprint(t,self.rules.snapshot(t['product']['product_id']),execution_config_digest(t['config_snapshot']))
 
     def _path(self,tid):
         if not re.fullmatch(r'[a-f0-9]{16}',tid): raise ValueError('任务编号无效')
@@ -114,7 +118,7 @@ class Engine:
             else:rows.extend(self.index.search('',library_type=lib,product_id=product['product_id'],limit=30,**filters))
         return {r['source_id']:r for r in rows}
 
-    def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements='',text_source=None,geo_brief=None):
+    def start(self,product_id,mode,*,user_ref,actor='user',chat_scope=None,extra_requirements='',text_source=None,geo_brief=None,reuse_analysis=True):
         require_user(actor,user_ref)
         require_declared_capabilities(self.settings,mode=mode)
         if mode not in ('automatic','learning'): raise ValueError('模式必须为learning或automatic')
@@ -129,7 +133,7 @@ class Engine:
         tid=uuid.uuid4().hex[:16]
         t={'task_id':tid,'product':product,'mode':mode,'state':'PREFLIGHT','stage':'PREFLIGHT','revision':0,'current_article':0,'articles':[],'topics':[],
            'sources':sources,'facts':facts,'coverage':report,'chat_scope':scope,'extra_requirements':extra_requirements,'results':{},'history':[],'approvals':[],'feedback':[],
-           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'image_text_policy_version':editorial.IMAGE_TEXT_POLICY_VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
+           'requests':[],'editorial_version':editorial.VERSION,'image_policy_version':editorial.IMAGE_POLICY_VERSION,'image_text_policy_version':editorial.IMAGE_TEXT_POLICY_VERSION,'geo_brief':geo_brief,'text_source':text_source,'text_requests':[],'rules_snapshot':None,'analysis_cache_bypass':not reuse_analysis,'authorization':{'start_user_ref':user_ref,'text_source':text_source},'created_at':now(),'config_snapshot':copy.deepcopy(self.settings),'error':None,'simulation':self.simulation}
         with self._lock(tid): return self._save(t)
 
     def _check_action(self,t,aid,revision):
@@ -167,6 +171,22 @@ class Engine:
             if reflection: kind='NEEDS_MODEL'
             host_contract=assess_host(self.settings,stage=stage,mode=t['mode'],has_images=bool(a and a['image_count']))
             if state not in ('COMPLETED','PAUSED','PARTIAL') and host_contract['verification']=='declared_only' and not host_contract['ready']:kind='BLOCKED'
+            if stage=='ANALYZING' and kind in ('NEEDS_MODEL','NEEDS_TOOL'):
+                key=self._analysis_key(t)
+                if t.get('analysis_input_fingerprint') and key!=t['analysis_input_fingerprint']:
+                    kind='BLOCKED';t['error']='分析输入已变化；请refresh重新分析'
+                else:
+                    pending=any(r.get('stage')=='ANALYZING' and r.get('status') in ('IN_FLIGHT','UNKNOWN','RECEIVED') for r in t.get('text_requests',[]))
+                    cached=self.analysis_cache.load(key) if t.get('analysis_input_fingerprint') and not t.get('analysis_cache_bypass') and not pending else None
+                if kind!='BLOCKED' and cached:
+                    return {'protocol':PROTOCOL,'host_contract':host_contract,'task_id':tid,
+                            'action_id':t['action_id'],'expected_revision':t['revision'],
+                            'kind':'NEEDS_TOOL','stage':stage,'object_id':tid,
+                            'prompt_template':'','input_refs':[],
+                            'context':{'analysis_cache':{'source_task_id':cached['source_task_id']}},
+                            'result_schema':None,'approval_required':False,
+                            'content_hash':digest(t['results']),'error':None,
+                            'text_source':t['text_source'],'output_path':None,'tool':'reuse-analysis'}
             api_action=kind=='NEEDS_MODEL' and uses_text_api(t,stage,a)
             if api_action:kind='NEEDS_TOOL'
             prompt_name={'PREFLIGHT':'preflight','ANALYZING':'analyze_chats','PLANNING':'plan_articles','WRITING':'write_article','TEXT_REVIEW':'review_text','IMAGE_PLANNING':'plan_images','IMAGE_REVIEW':'review_images','FINAL_REVIEW':'review_final'}.get(stage)
@@ -297,6 +317,24 @@ class Engine:
                 for item in value: walk(item)
         walk(result)
 
+    def _validate_analysis(self,t,result):
+        topic_ids=[x['topic_id'] for x in result['topics']]
+        if len(topic_ids)!=len(set(topic_ids)): raise ValueError('主题ID重复')
+        for topic in result['topics']:
+            if t.get('editorial_version') and not editorial.question_title(topic['question_summary']):
+                raise ValueError('聊天分析候选必须是问题型钩子标题，并以问号结尾')
+            rows=[t['sources'][s] for s in topic['source_ids']]
+            if not rows or any(x['library_type']!='chat' or x['metadata'].get('role') not in ('customer','客户','user') for x in rows): raise ValueError('主题必须来自明确客户发问，客服或未知角色不得算客户诉求')
+            if topic['scope']=='product_specific' and any(x['product_id']!=t['product']['product_id'] for x in rows): raise ValueError('通用来源不得冒称产品专属反馈')
+            if topic['count_basis']=='conversation':
+                conv={(x['location']['relative_path'],x['metadata'].get('conversation_id')) for x in rows}
+                if any(c[1] in (None,'') for c in conv) or topic['verified_count']!=len(conv): raise ValueError('会话统计依据不可靠')
+            elif topic['count_basis']=='fragment' and topic['verified_count']!=len({(x['hash'],digest(x['location'])) for x in rows}): raise ValueError('片段统计不正确')
+            elif topic['count_basis']=='reported_aggregate':
+                if any(x['metadata'].get('evidence_type')!='customer_aggregate' or type(x['metadata'].get('reported_count')) is not int for x in rows):raise ValueError('汇总次数只能引用明确的客户关注统计行')
+                if topic['verified_count']!=sum(x['metadata']['reported_count'] for x in rows):raise ValueError('客户关注汇总次数不正确')
+            elif topic['count_basis']=='unknown' and topic['verified_count'] is not None: raise ValueError('未知统计不能填数字')
+
     def submit(self,tid,action_id,revision,result,*,actor='model',user_ref=None,producer=None,_text_request_id=None):
         producer=producer_identity(producer)
         if producer and actor!='model':raise ValueError('人工结果不能附带模型身份冒充模型审核')
@@ -321,22 +359,9 @@ class Engine:
             if stage in ('IMAGE_REVIEW','FINAL_REVIEW') and result.get('reviewer')=='human': require_user(actor,user_ref)
             elif actor!='model': raise ValueError('此动作应由当前宿主模型提交')
             if stage=='ANALYZING':
-                topic_ids=[x['topic_id'] for x in result['topics']]
-                if len(topic_ids)!=len(set(topic_ids)): raise ValueError('主题ID重复')
-                for topic in result['topics']:
-                    if t.get('editorial_version') and not editorial.question_title(topic['question_summary']):
-                        raise ValueError('聊天分析候选必须是问题型钩子标题，并以问号结尾')
-                    rows=[t['sources'][s] for s in topic['source_ids']]
-                    if not rows or any(x['library_type']!='chat' or x['metadata'].get('role') not in ('customer','客户','user') for x in rows): raise ValueError('主题必须来自明确客户发问，客服或未知角色不得算客户诉求')
-                    if topic['scope']=='product_specific' and any(x['product_id']!=t['product']['product_id'] for x in rows): raise ValueError('通用来源不得冒称产品专属反馈')
-                    if topic['count_basis']=='conversation':
-                        conv={(x['location']['relative_path'],x['metadata'].get('conversation_id')) for x in rows}
-                        if any(c[1] in (None,'') for c in conv) or topic['verified_count']!=len(conv): raise ValueError('会话统计依据不可靠')
-                    elif topic['count_basis']=='fragment' and topic['verified_count']!=len({(x['hash'],digest(x['location'])) for x in rows}): raise ValueError('片段统计不正确')
-                    elif topic['count_basis']=='reported_aggregate':
-                        if any(x['metadata'].get('evidence_type')!='customer_aggregate' or type(x['metadata'].get('reported_count')) is not int for x in rows):raise ValueError('汇总次数只能引用明确的客户关注统计行')
-                        if topic['verified_count']!=sum(x['metadata']['reported_count'] for x in rows):raise ValueError('客户关注汇总次数不正确')
-                    elif topic['count_basis']=='unknown' and topic['verified_count'] is not None: raise ValueError('未知统计不能填数字')
+                if t.get('analysis_input_fingerprint') and self._analysis_key(t)!=t['analysis_input_fingerprint']:
+                    raise ValueError('分析输入已变化；请refresh重新分析')
+                self._validate_analysis(t,result)
             if stage=='PLANNING' and result['angle']!=a['angle']: raise ValueError('策划角度必须与所选独立角度一致；更换需人工修改')
             if t.get('editorial_version') and stage=='PLANNING':editorial.validate_plan(result,a['geo_brief'])
             if stage=='WRITING':
@@ -374,13 +399,42 @@ class Engine:
             elif t['mode']=='learning' and stage in ('PREFLIGHT','PLANNING','TEXT_REVIEW','IMAGE_PLANNING','IMAGE_REVIEW','FINAL_REVIEW',*editorial.REVIEW_STAGES):
                 t['state']='WAITING_APPROVAL'
             else: self._advance(t)
-            return self._save(t)
+            saved=self._save(t)
+            if stage=='ANALYZING' and t.get('analysis_input_fingerprint') and not t.get('analysis_cache_bypass'):
+                try:self.analysis_cache.store(t['analysis_input_fingerprint'],result,tid)
+                except (OSError,ValueError):pass
+            return saved
 
     def _advance(self,t):
         stage=t['stage'];a=self._article(t)
         next_stage={'PREFLIGHT':'ANALYZING','PLANNING':'WRITING','WRITING':'FACT_REVIEW' if t.get('editorial_version') else 'TEXT_REVIEW','FACT_REVIEW':'GEO_REVIEW','GEO_REVIEW':'CONTENT_REVIEW','CONTENT_REVIEW':'IMAGE_PLANNING' if a and a['image_count'] else 'FINAL_REVIEW','TEXT_REVIEW':'IMAGE_PLANNING' if a and a['image_count'] else 'FINAL_REVIEW',
                     'IMAGE_PLANNING':'GENERATING_IMAGES','GENERATING_IMAGES':'IMAGE_REVIEW','IMAGE_REVIEW':'FINAL_REVIEW','FINAL_REVIEW':'EXPORT'}[stage]
         t['stage']=t['state']=next_stage
+        if next_stage=='ANALYZING':t['analysis_input_fingerprint']=self._analysis_key(t)
+
+    def reuse_analysis(self,tid,action_id,revision):
+        """Apply a matching validated analysis without a model or paid text request."""
+        with self._lock(tid):
+            t=self._load(tid);self._check_action(t,action_id,revision)
+            if t['stage']!='ANALYZING' or t['state']!='ANALYZING' or t.get('analysis_cache_bypass'):
+                raise ValueError('当前任务不能复用分析')
+            if any(r.get('stage')=='ANALYZING' and r.get('status') in ('IN_FLIGHT','UNKNOWN','RECEIVED') for r in t.get('text_requests',[])):
+                raise ValueError('仍有待核对的文字API请求，不能复用分析')
+            self._check_snapshot(t);self._verify_files(t)
+            key=self._analysis_key(t)
+            if key!=t.get('analysis_input_fingerprint'):
+                raise ValueError('分析输入已变化；请refresh重新分析')
+            cached=self.analysis_cache.load(key,strict=True)
+            if cached is None:raise ValueError('没有匹配的分析缓存；请重新分析')
+            result=cached['result']
+            validate_result('ANALYZING',result);self._validate_sources(t,result)
+            self._validate_analysis(t,result)
+            t['results']['ANALYZING']=copy.deepcopy(result)
+            t['topics']=copy.deepcopy(result['topics']);t['state']='WAITING_SELECTION'
+            t['history'].append({'reason':'analysis_cache_reused','fingerprint':key,
+                                 'source_task_id':cached['source_task_id'],
+                                 'result_hash':cached['result_hash'],'at':now()})
+            return self._save(t)
 
     def approve(self,tid,action_id,revision,*,user_ref,actor='user',rule_ids=None):
         require_user(actor,user_ref)
@@ -723,6 +777,8 @@ class Engine:
             for r in rows:
                 if r['source_id'] in t['sources'] and r['hash']!=t['sources'][r['source_id']]['hash']: raise ValueError('检索来源与快照冲突')
                 t['sources'][r['source_id']]=r
+            if t['stage']=='ANALYZING' and t.get('analysis_input_fingerprint'):
+                t['analysis_input_fingerprint']=self._analysis_key(t)
             self._save(t);return rows
 
     def refresh(self,tid,*,user_ref,actor='user'):
@@ -736,6 +792,7 @@ class Engine:
             self.index.update();t['history'].append({'reason':'explicit_refresh','user_ref':user_ref,'articles':copy.deepcopy(t['articles']),'sources':t['sources'],'rules_snapshot':t['rules_snapshot']})
             t['sources']=self._sources(t['product'],t['chat_scope']);t['facts']=self.products.facts(t['product']['product_id'],approved_only=True)
             t['rules_snapshot']=None;t['articles']=[];t['topics']=[];t['current_article']=0;t['results']={};t['stage']=t['state']='PREFLIGHT';t['config_snapshot']=copy.deepcopy(self.settings);t['error']=None
+            t['analysis_cache_bypass']=True;t.pop('analysis_input_fingerprint',None)
             t['editorial_version']=editorial.VERSION
             t['image_policy_version']=editorial.IMAGE_POLICY_VERSION
             t['image_text_policy_version']=editorial.IMAGE_TEXT_POLICY_VERSION
@@ -774,6 +831,8 @@ class Engine:
                     request.update(status='RESOLVED',previous_status=request['status'],
                                    automatic_resolution='abandoned_after_user_source_switch',resolution_user_ref=user_ref,resolved_at=now())
             t['text_source']=text_source
+            if t['stage']=='ANALYZING' and t.get('analysis_input_fingerprint'):
+                t['analysis_input_fingerprint']=self._analysis_key(t)
             t.setdefault('authorization',{}).setdefault('text_source_changes',[]).append(
                 {'from':old,'to':text_source,'user_ref':user_ref,'at':now()})
             return self._save(t)

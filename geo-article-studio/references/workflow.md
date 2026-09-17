@@ -1,6 +1,6 @@
 # 执行状态
 
-v1.4新任务：PREFLIGHT → ANALYZING → WAITING_SELECTION/WAITING_COUNTS → PLANNING → WRITING → FACT_REVIEW → GEO_REVIEW → CONTENT_REVIEW → IMAGE_PLANNING → GENERATING_IMAGES → IMAGE_REVIEW → FINAL_REVIEW → EXPORT。零图跳过三个图片阶段。每篇EXPORT后自动处理下一篇；全部校验发布后COMPLETED。旧任务无editorial_version时仍使用TEXT_REVIEW，refresh后升级。
+新任务：PREFLIGHT → ANALYZING → WAITING_SELECTION/WAITING_COUNTS → PLANNING → WRITING → FACT_REVIEW → GEO_REVIEW → CONTENT_REVIEW → IMAGE_PLANNING → GENERATING_IMAGES → IMAGE_REVIEW → FINAL_REVIEW → EXPORT。ANALYZING可对完全相同且已验证的输入执行reuse-analysis，省去重复模型分析；来源、事实、规则、配置、需求或编辑标准变化时失效。人工选题与各篇数量不可跳过。零图跳过三个图片阶段。每篇EXPORT后自动处理下一篇；全部校验发布后COMPLETED。旧任务无editorial_version时仍使用TEXT_REVIEW，refresh后升级。
 
 学习模式在预检、当前篇策划、正文及独立自审、配图计划、实际图片审核、最终审核后WAITING_APPROVAL。主题与数量由select提交即批准选题配置。修改保留旧结果/审批历史并清理受影响结果，不能越级。
 
