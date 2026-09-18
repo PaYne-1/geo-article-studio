@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GEO图文生产助手｜技能包使用方法</title>
+  <style>
+    :root { --ink:#17202a; --muted:#5f6b76; --line:#d8e0e6; --paper:#fff; --wash:#f4f8fa; --brand:#087e8b; --accent:#f4b942; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--wash); color:var(--ink); font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+    main { max-width:980px; margin:32px auto; padding:0 20px 44px; }
+    header { padding:42px 44px; color:#fff; background:linear-gradient(135deg,#07515d,#087e8b); border-radius:20px; box-shadow:0 16px 34px #087e8b33; }
+    h1 { margin:0 0 8px; font-size:clamp(29px,5vw,45px); line-height:1.2; }
+    h2 { margin:36px 0 14px; font-size:24px; }
+    h3 { margin:24px 0 8px; font-size:18px; }
+    p { margin:8px 0 12px; }
+    .lead { margin:0; opacity:.92; font-size:18px; }
+    .badge { display:inline-block; margin-bottom:16px; padding:3px 11px; border:1px solid #ffffff77; border-radius:999px; font-size:13px; }
+    section { margin-top:24px; padding:26px 30px; background:var(--paper); border:1px solid var(--line); border-radius:16px; box-shadow:0 3px 11px #17202a09; }
+    .callout { padding:14px 16px; border-left:4px solid var(--brand); background:#eaf7f7; border-radius:8px; }
+    .warning { border-left-color:#d58600; background:#fff7e5; }
+    .steps { counter-reset:step; list-style:none; padding:0; }
+    .steps li { position:relative; padding:0 0 18px 48px; }
+    .steps li::before { content:counter(step); counter-increment:step; position:absolute; left:0; top:2px; width:29px; height:29px; border-radius:50%; color:#fff; text-align:center; line-height:29px; background:var(--brand); font-weight:700; }
+    code { padding:2px 5px; border-radius:5px; background:#edf2f5; color:#33434e; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.92em; }
+    pre { overflow:auto; margin:12px 0; padding:15px 17px; border-radius:10px; color:#eaf3f4; background:#18242b; white-space:pre-wrap; }
+    pre code { padding:0; color:inherit; background:transparent; }
+    table { width:100%; border-collapse:collapse; margin:12px 0; }
+    th,td { padding:10px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); }
+    th { color:#34434d; background:#f4f8fa; }
+    details { margin:12px 0; padding:12px 14px; border:1px solid var(--line); border-radius:10px; }
+    summary { cursor:pointer; font-weight:700; }
+    a { color:#006f7b; }
+    .toc { columns:2; padding-left:20px; }
+    .toc li { margin:4px 0; }
+    footer { padding:22px; color:var(--muted); text-align:center; font-size:14px; }
+    @media (max-width:620px) { main { margin:0; padding:0 12px 26px; } header,section { border-radius:12px; padding:24px 18px; } .toc { columns:1; } th,td { padding:8px; } }
+    @media print { body { background:#fff; } main { max-width:none; margin:0; } section { break-inside:avoid; box-shadow:none; } header { box-shadow:none; } a { color:inherit; text-decoration:none; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="badge">GEO 图文生产助手 · 218轻便侠</span>
+    <h1>技能包使用方法明细</h1>
+    <p class="lead">适用于 Hermes 和支持 Agent Skills、文件访问及本地命令执行的其他 Agent。</p>
+  </header>
+
+  <section>
+    <h2>你将完成什么</h2>
+    <p>技能从聊天库分析真实客户最在意的问题，给出问题型选题；你选定主题、文章数和配图数后，自动完成文章、配图和保存。标题、正文和每张图片分别保存在每篇文章的独立文件夹。</p>
+    <ul class="toc">
+      <li><a href="#install">安装与升级</a></li><li><a href="#configure">首次配置</a></li>
+      <li><a href="#start">开始任务</a></li><li><a href="#topics">选题后继续</a></li>
+      <li><a href="#resume">暂停与续跑</a></li><li><a href="#images">配图与审核</a></li>
+      <li><a href="#output">成品位置</a></li><li><a href="#faq">常见问题</a></li>
+    </ul>
+  </section>
+
+  <section id="install">
+    <h2>1. 安装与升级</h2>
+    <p>下载完整 ZIP 后，在 Hermes 所在电脑安装。不要只复制 <code>SKILL.md</code>；ZIP 内的脚本、规则和参考文件都需要保留。</p>
+    <ol class="steps">
+      <li>确认 Hermes 当前 profile 的 <code>skills</code> 父目录，以及一个单独的运行数据目录 <code>data</code>。</li>
+      <li>用技能包中的 <code>scripts/install.py</code> 安装 ZIP。首次安装不加 <code>--upgrade</code>。</li>
+      <li>创建运行数据目录的虚拟环境并安装依赖。重启或新开 Hermes 会话，使它重新读取新版技能。</li>
+    </ol>
+    <pre><code>$basePython = '实际的Python 3.11以上解释器路径'
+$zip = '下载的geo-article-studio-v1.6.5.zip'
+$skills = 'Hermes当前profile的skills目录'
+$data = '独立运行数据目录'
+
+&amp; $basePython '解压后的geo-article-studio\scripts\install.py' --host hermes --source $zip --skills-dir $skills --data-dir $data
+&amp; $basePython -m venv "$data\venv"
+$python = "$data\venv\Scripts\python.exe"
+&amp; $python -m pip install "$skills\geo-article-studio"
+&amp; $python "$skills\geo-article-studio\scripts\geo.py" --help</code></pre>
+    <div class="callout">升级时必须继续使用原来的 <code>$data</code>，这样已保存的路径、配置、任务、学习规则和选题分析缓存才会保留。</div>
+    <pre><code>&amp; $basePython '解压后的geo-article-studio\scripts\install.py' --host hermes --source $zip --skills-dir $skills --data-dir $data --upgrade</code></pre>
+  </section>
+
+  <section id="configure">
+    <h2>2. 首次配置</h2>
+    <p>在 Hermes 对话中发送：<code>配置任务</code>。可以分次填，保存配置时不会自动发起图片或文字 API 请求。</p>
+    <table>
+      <thead><tr><th>项目</th><th>需要提供的内容</th></tr></thead>
+      <tbody>
+        <tr><td>基础配置</td><td>产品名称、聊天库路径、产品信息库路径、参考图库路径、产品图库路径、成品保存目录。</td></tr>
+        <tr><td>图片 API</td><td>图片模型名称与 API Key；可选填写每任务图片调用上限。图片必须固定 3:4，且每张都展示当前产品。</td></tr>
+        <tr><td>第三方文字 API</td><td>可选。文字模型名称与 API Key。若不配置，开始任务时可选择当前 Agent 默认模型。</td></tr>
+      </tbody>
+    </table>
+    <p>API Key 可以由你在当前对话中主动提供，并注明“图片”或“文字”及模型名称；技能只保存安全凭据或环境变量引用，不能把密钥写入普通配置、成品或 Git。</p>
+    <pre><code>产品名称：218轻便侠
+聊天库路径：Y:\GEO\聊天库
+产品信息库路径：Y:\GEO\产品信息库
+参考图库路径：Y:\GEO\参考图库
+产品图库路径：Y:\GEO\产品图库
+成品保存目录：Y:\GEO\成品
+
+图片模型：你的图片模型名
+图片 API Key：你的密钥
+每任务图片调用上限：5
+
+文字模型：你的文字模型名
+文字 API Key：你的密钥</code></pre>
+  </section>
+
+  <section id="start">
+    <h2>3. 开始一个自动任务</h2>
+    <p>发送：<code>开始任务</code>。然后填本次模式、文字来源、目标、发布平台、目标 AI、篇幅和可选的图片审核策略。</p>
+    <pre><code>自动模式
+当前 Agent 默认模型
+图片审核策略：不审核 直接用
+目标：品牌曝光 / 型号种草 / 用户转化 / AI引用
+发布平台：知乎 / 头条 / 搜狐 / 百家号 / 企鹅号 / 网易
+目标AI：DeepSeek / 豆包 / 文心一言 / 元宝
+短篇 600–800字
+图片调用上限：5</code></pre>
+    <div class="callout">完整列出一个字段的所有候选项，或直接写“全选”，技能会按全选继续，不再额外弹出确认框。只填写部分候选时，技能会按你的实际选择处理。</div>
+    <p><strong>文字来源：</strong>“当前 Agent 默认模型”不需要文字 API；“第三方文字 API”会使用已配置的文字模型。每个新任务都要明确选择一次。</p>
+  </section>
+
+  <section id="topics">
+    <h2>4. 选题生成后怎么继续</h2>
+    <p>聊天库分析完成后，助手会返回类似 T01、T02 的问题型标题候选。此时不要再次发送“开始任务”，直接选主题并给出篇数、每篇图片数：</p>
+    <pre><code>选择 T01，写1篇，每篇2张</code></pre>
+    <p>多个主题可一次说明：</p>
+    <pre><code>选择 T01、T03；T01写1篇，每篇2张，T03写2篇，每篇1张</code></pre>
+    <p>这一步既是标题确认，也是当前任务的生产授权。系统会使用已经完成的聊天分析，不会重新分析聊天记录。</p>
+  </section>
+
+  <section id="resume">
+    <h2>5. 暂停、换会话和续跑</h2>
+    <table>
+      <thead><tr><th>情况</th><th>怎么说</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td>暂时停止</td><td><code>暂停任务</code></td><td>保存当前状态，不发起新的请求。</td></tr>
+        <tr><td>原会话继续</td><td>直接发送选题/确认/修改内容</td><td>沿用当前任务，不重新分析。</td></tr>
+        <tr><td>断开后恢复</td><td><code>继续任务＋任务编号</code></td><td>校验已完成文件，不重复生成已合格内容。</td></tr>
+        <tr><td>修改当前结果</td><td><code>修改：具体要求</code></td><td>保留旧记录，修改当前阶段并复审。</td></tr>
+      </tbody>
+    </table>
+    <div class="warning callout">不要用“开始任务”恢复旧任务。它会创建新任务；只有配置、资料、规则和任务需求完全一致时，新任务才可能复用选题分析缓存。</div>
+  </section>
+
+  <section id="images">
+    <h2>6. 配图与审核</h2>
+    <ul>
+      <li>所有图片固定 3:4 竖版，必须出现已批准的当前产品图。</li>
+      <li>图片提示词从正文段落生成，并绑定正文信息、产品图、参考图库风格、场景透视和光影融合要求。</li>
+      <li>默认逐图审核。自动模式下明确选择“<strong>不审核 直接用</strong>”时，图片经技术校验后直接采用；成品会写入 <code>图片审核状态.txt</code>，标明未做视觉审核。</li>
+      <li>无论是否视觉审核，图片外传授权、参考图借鉴范围、请求上限和文件校验都仍然生效。</li>
+    </ul>
+  </section>
+
+  <section id="output">
+    <h2>7. 成品保存在哪里</h2>
+    <p>成功后，助手只返回真实成品根目录的绝对路径。目录名采用：<code>时间_产品名_三位序号</code>。每篇文章有独立子目录：</p>
+    <pre><code>成品保存目录
+└── 20260918_218轻便侠_001
+    └── 001
+        ├── 标题.txt
+        ├── 正文.txt
+        ├── 配图_01.png
+        ├── 配图_02.png
+        └── 图片审核状态.txt（仅选择不审核直接用时）</code></pre>
+  </section>
+
+  <section id="faq">
+    <h2>8. 常见问题</h2>
+    <details><summary>我只想让它复用选题，不重复分析聊天库。</summary><p>在同一个任务里，选题出来后直接发送“选择 T01，写1篇，每篇2张”。断开后使用“继续任务＋任务编号”。不要重新发送“开始任务”。</p></details>
+    <details><summary>为什么任务停住？</summary><p>通常是等待你选择主题、填写篇数/图片数，或缺少产品事实、产品图授权、参考图授权、图片 API 配置、图片额度或视觉能力。查看当前助手消息中的缺项或阻断原因即可。</p></details>
+    <details><summary>能否不生成图片？</summary><p>可以。选题时明确每篇为 0 张图。零图文章不要求图片 API 完整配置。</p></details>
+    <details><summary>能否修改已生成文章？</summary><p>可以发送“修改：……”；系统会保留历史版本。实质改正文后，关联配图会失效，需要按当前任务规则重新处理。</p></details>
+    <details><summary>为什么没有立即给出成品路径？</summary><p>只有标题、正文、实际图片和必要审核/技术校验达到当前任务要求后，技能才返回真实成品目录。等待确认或失败阶段不会伪造成功路径。</p></details>
+  </section>
+
+  <footer>GEO图文生产助手 · 默认产品名：218轻便侠 · 打开本文件即可离线查阅</footer>
+</main>
+</body>
+</html>
