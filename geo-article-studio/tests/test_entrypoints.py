@@ -43,6 +43,18 @@ def test_start_uses_correct_product_and_asks_mode():
     assert form['values']['mode'] is None and 'mode' in form['missing']
     assert form['choices']['mode']==['learning','automatic']
 
+def test_full_current_message_candidate_lists_are_explicit_all_selections_without_followup():
+    from geo_article_studio.editorial import GOALS, PLATFORMS, TARGET_AIS
+    form=form_for('开始任务',copy.deepcopy(DEFAULT_SETTINGS),{
+        'mode':'automatic', 'text_source':'host', 'image_review_policy':'direct_use',
+        'goals':copy.deepcopy(GOALS), 'platforms':copy.deepcopy(PLATFORMS),
+        'target_ais':copy.deepcopy(TARGET_AIS), 'article_type':'short'})
+    assert form['missing']==[]
+    policy=form['selection_interpretation']
+    assert policy['full_list_is_explicit_selection'] is True
+    assert policy['followup_required_when']=='only_partial_missing_or_unknown'
+    assert policy['canonical_candidates']=={'goals':GOALS,'platforms':PLATFORMS,'target_ais':TARGET_AIS}
+
 def test_configuration_includes_api_and_libraries_in_one_form(monkeypatch):
     monkeypatch.delenv('GEO_IMAGE_API_KEY',raising=False)
     monkeypatch.delenv('GEO_TEXT_API_KEY',raising=False)

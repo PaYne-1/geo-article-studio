@@ -45,6 +45,11 @@ def form_for(trigger,settings,provided=None,*,config_path=None,persisted=None):
     values.update(p)
     return {'action':action,'values':values,'missing':[k for k in required if values.get(k) in (None,'',[])],
             'sections':sections,'choices':{'mode':['learning','automatic'],'text_source':['host','api'],'image_review_policy':['reviewed','direct_use'],'goals':GOALS,'platforms':PLATFORMS,'target_ais':TARGET_AIS,'article_type':['short','long']} if action=='start' else {},
+            'selection_interpretation':{
+                'full_list_is_explicit_selection':True,
+                'followup_required_when':'only_partial_missing_or_unknown',
+                'canonical_candidates':{'goals':GOALS,'platforms':PLATFORMS,'target_ais':TARGET_AIS},
+                'instruction':'当前用户完整列出某个多选字段的全部候选值，或明确写“全选”时，视为该字段已完成的人工选择，直接继续；不得打开选项选择器或再次确认。只在字段缺失、仅列出部分候选或出现未知值时补问。'},
             'text_options':[{'value':'host','label':'当前Agent默认模型','available':True},{'value':'api','label':'第三方文字API','model':text_config.get('model'),'available':text_check['ok'],'missing':text_check['errors']}],
             'title_generation':{'source':'chat_analysis','format':'question_hook','confirmation':'topic_multi_select','notice':'标题由Agent分析聊天库中的真实客户关注点后生成问题型钩子候选；用户多选即确认标题，再填写各主题文章数和逐篇图片数。'},
             'text_notice':'文字API配置长期保存；每次任务明确选择来源。选择API将发送有限文字上下文并可能收费，失败不自动改用宿主。带图自动任务默认需要已验证视觉能力；仅用户明确选择direct_use时生成即采用，并在成品标记未做视觉审核。',
